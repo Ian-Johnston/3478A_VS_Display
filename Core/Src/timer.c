@@ -293,12 +293,76 @@ static uint8_t  dbg_xor260_20_b0, dbg_xor260_20_b1;
 /* 0x380 prev-length tracking */
 static uint8_t  len380_prev;
 
+static uint8_t cand260[64];
+static uint8_t candLen260 = 0;
+static uint8_t candValid260 = 0;
+static uint8_t candRepeats260 = 0;
+
+static uint8_t stable260[64];
+static uint8_t stableLen260 = 0;
+static uint32_t stable260Hits = 0;
+
+// Debug taps
+static uint8_t dbg_stableAccept = 0;
+static uint8_t dbg_candRepeats = 0;
+static uint8_t dbg_diffFirstIdx = 0xFF;
+
+// --- NEW: 0x260 stability latch ---
+static uint8_t  last260_raw[64];
+static uint8_t  last260_raw_len = 0;
+
+static uint8_t  stable260[64];
+static uint8_t  stable260_len = 0;
+
+static uint32_t stable260_acceptCount = 0;
+static uint32_t stable260_rejectCount = 0;
+
+// --- 3478A: stability filter for 0x260 payload ---
+uint8_t  stable260_sameCount = 0;
+uint8_t  stable260_candLen = 0;
+uint8_t  stable260_cand[64];
+
+//uint8_t  stable260_len = 0;
+uint8_t  stable260_pay[64];
+//uint32_t stable260_acceptCount = 0;
+//uint32_t stable260_rejectCount = 0;
+
+static uint8_t havePrev260_20 = 0;
+static uint8_t prev260_20[20];
+
+static uint8_t havePrev260_31 = 0;
+static uint8_t prev260_31[31];
 
 
 
 
 //*************************
 //volatile uint8_t dbgCode[12];
+
+
+static uint8_t Same260_AllowBlink(const uint8_t* a, const uint8_t* b, uint8_t len, uint8_t* firstDiffIdx)
+{
+    // Allow byte[0] to toggle (you observed 0 <-> 96 with the flashing DP)
+    // Everything else must match to be considered “same”.
+    for (uint8_t i = 0; i < len; i++) {
+        if (i == 0) continue;                 // ignore blink byte
+        if (a[i] != b[i]) {
+            if (firstDiffIdx) *firstDiffIdx = i;
+            return 0;
+        }
+    }
+    if (firstDiffIdx) *firstDiffIdx = 0xFF;
+    return 1;
+}
+
+static void LatchStable260(const uint8_t* frame, uint8_t len)
+{
+    if (len > sizeof(stable260)) len = sizeof(stable260);
+    for (uint8_t i = 0; i < len; i++) stable260[i] = frame[i];
+    stableLen260 = len;
+    stable260Hits++;
+}
+
 
 
 
@@ -357,136 +421,138 @@ void DMM_HandleO2Clock(void)
 
         dbg_inISA++;
 
+        isaBranchHits++;
+
         uint8_t bit = (uint8_t)HAL_GPIO_ReadPin(DMM_ISA_GPIO_Port, DMM_ISA_Pin) & 1u;
+        lastBit = bit;
+        if (bit) lastBitOnes++;
+
+        isaBuffer[isaIndex++] = bit;
+        isaIndex %= MAX_BUFFER_SIZE;
+        ISAcount++;
+
+        /* ---- build 10-bit ISA command (LSB first) ---- */
         isa10 |= (uint16_t)(bit << isaBitCount);
         isaBitCount++;
 
         if (isaBitCount == 10) {
 
-            /* ---- command complete ---- */
+            /* 3478A test counters (DO NOT reset these here) */
             isaCmdCompleteCount++;
-            lastCmd = isa10;
+            lastCmd10 = isa10;
 
-            /* Close out previous command payload */
+            if ((lastCmd10 & 0x000F) == 0) isaCmdLowNibbleZeroCount++;
+            else                           isaCmdLowNibbleNonZeroCount++;
+
+            lastCmd = isa10;        /* FULL 10-bit command */
+
+            /* ---- CLOSE OUT PREVIOUS COMMAND PAYLOAD ---- */
             lastCmdPrev = currentCmd10;
             lastInaLenPrev = payloadBufLen;
-            dbg_lastCmdPrev = lastCmdPrev;
 
-            /* snapshot payload for Live Watch */
+            /* snapshot payloadBuf -> lastPayload (for Live Watch / decode) */
             lastPayloadLen = payloadBufLen;
             if (lastPayloadLen > sizeof(lastPayload)) lastPayloadLen = sizeof(lastPayload);
-            for (uint8_t i = 0; i < lastPayloadLen; i++) lastPayload[i] = payloadBuf[i];
 
-            /* 3478A: capture 0x260 / 0x380 payloads (previous command) */
-            if (((lastCmdPrev & 0x03FF) == 0x260)) {
-
-                hit260++;
-                lastLen260 = lastInaLenPrev;
-
-                len260 = lastPayloadLen;
-                if (len260 > sizeof(pay260)) len260 = sizeof(pay260);
-                for (uint8_t i = 0; i < len260; i++) pay260[i] = lastPayload[i];
-
-                /* XOR/diff for 31-byte frames */
-                if (len260 == 31) {
-
-                    diffCount260_31 = 0;
-
-                    if (havePrev31) {
-                        for (uint8_t i = 0; i < 31; i++) {
-                            uint8_t x = (uint8_t)(pay260[i] ^ pay260_prev31[i]);
-                            xor260_31[i] = x;
-                            if (x) { diffCount260_31++; chg260_31[i]++; }
-                        }
-                    }
-                    else {
-                        for (uint8_t i = 0; i < 31; i++) xor260_31[i] = 0;
-                    }
-
-                    for (uint8_t i = 0; i < 31; i++) pay260_prev31[i] = pay260[i];
-                    havePrev31 = 1;
-
-                    dbg_xor260_b0 = xor260_31[0];
-                    dbg_xor260_b1 = xor260_31[1];
-                    dbg_xor260_b2 = xor260_31[2];
-
-                    /* taps 0..22 */
-                    dbg260_b0 = pay260[0];  dbg260_b1 = pay260[1];  dbg260_b2 = pay260[2];
-                    dbg260_b3 = pay260[3];  dbg260_b4 = pay260[4];  dbg260_b5 = pay260[5];
-                    dbg260_b6 = pay260[6];  dbg260_b7 = pay260[7];  dbg260_b8 = pay260[8];
-                    dbg260_b9 = pay260[9];  dbg260_b10 = pay260[10]; dbg260_b11 = pay260[11];
-                    dbg260_b12 = pay260[12]; dbg260_b13 = pay260[13]; dbg260_b14 = pay260[14];
-                    dbg260_b15 = pay260[15]; dbg260_b16 = pay260[16]; dbg260_b17 = pay260[17];
-                    dbg260_b18 = pay260[18]; dbg260_b19 = pay260[19]; dbg260_b20 = pay260[20];
-                    dbg260_b21 = pay260[21]; dbg260_b22 = pay260[22];
-                }
-
-                /* XOR/diff for 20-byte frames */
-                else if (len260 == 20) {
-
-                    diffCount260_20 = 0;
-
-                    if (havePrev20) {
-                        for (uint8_t i = 0; i < 20; i++) {
-                            uint8_t x = (uint8_t)(pay260[i] ^ pay260_prev20[i]);
-                            xor260_20[i] = x;
-                            if (x) { diffCount260_20++; chg260_20[i]++; }
-                        }
-                    }
-                    else {
-                        for (uint8_t i = 0; i < 20; i++) xor260_20[i] = 0;
-                    }
-
-                    for (uint8_t i = 0; i < 20; i++) pay260_prev20[i] = pay260[i];
-                    havePrev20 = 1;
-
-                    dbg_xor260_20_b0 = xor260_20[0];
-                    dbg_xor260_20_b1 = xor260_20[1];
-                }
+            for (uint8_t i = 0; i < lastPayloadLen; i++) {
+                lastPayload[i] = payloadBuf[i];
             }
 
-            else if (((lastCmdPrev & 0x03FF) == 0x380)) {
+            dbg_lastCmdPrev = lastCmdPrev;
 
-                hit380++;
-                lastLen380 = lastInaLenPrev;
+            /* ---- 0x260 STABILITY LATCH (ignore byte0 DP blink 0x60) ---- */
+            if ((lastCmdPrev & 0x03FF) == 0x260 && (lastPayloadLen == 20 || lastPayloadLen == 31)) {
 
-                len380 = lastPayloadLen;
-                if (len380 > sizeof(pay380)) len380 = sizeof(pay380);
-                for (uint8_t i = 0; i < len380; i++) pay380[i] = lastPayload[i];
+                /* prev buffers must be global or static */
+                /* Add these near your globals:
+                   static uint8_t prev260_20[20], prev260_31[31];
+                   static uint8_t havePrev260_20 = 0, havePrev260_31 = 0;
+                */
 
-                diffCount380 = 0;
+                uint8_t stable = 0;
 
-                if (havePrev380 && (len380 == len380_prev)) {
-                    for (uint8_t i = 0; i < len380; i++) {
-                        uint8_t x = (uint8_t)(pay380[i] ^ pay380_prev[i]);
-                        xor380[i] = x;
-                        if (x) { diffCount380++; chg380[i]++; }
+                if (lastPayloadLen == 20) {
+
+                    if (havePrev260_20) {
+                        stable = 1;
+                        for (uint8_t i = 0; i < 20; i++) {
+                            if (i == 0) {
+                                uint8_t x = (uint8_t)(lastPayload[0] ^ prev260_20[0]);
+                                if (x != 0x00 && x != 0x60) { stable = 0; break; }  // allow DP blink
+                            }
+                            else {
+                                if (lastPayload[i] != prev260_20[i]) { stable = 0; break; }
+                            }
+                        }
                     }
+
+                    for (uint8_t i = 0; i < 20; i++) prev260_20[i] = lastPayload[i];
+                    havePrev260_20 = 1;
+
+                }
+                else { /* 31 */
+
+                    if (havePrev260_31) {
+                        stable = 1;
+                        for (uint8_t i = 0; i < 31; i++) {
+                            if (i == 0) {
+                                uint8_t x = (uint8_t)(lastPayload[0] ^ prev260_31[0]);
+                                if (x != 0x00 && x != 0x60) { stable = 0; break; }  // allow DP blink
+                            }
+                            else {
+                                if (lastPayload[i] != prev260_31[i]) { stable = 0; break; }
+                            }
+                        }
+                    }
+
+                    for (uint8_t i = 0; i < 31; i++) prev260_31[i] = lastPayload[i];
+                    havePrev260_31 = 1;
+                }
+
+                if (stable) {
+                    /* ACCEPT: publish a clean, stable payload */
+                    stable260_acceptCount++;
+
+                    len260 = (uint8_t)lastPayloadLen;
+                    if (len260 > sizeof(pay260)) len260 = sizeof(pay260);
+                    for (uint8_t i = 0; i < len260; i++) pay260[i] = lastPayload[i];
+
                 }
                 else {
-                    for (uint8_t i = 0; i < len380; i++) xor380[i] = 0;
+                    /* REJECT: still settling (or only have 1st frame) */
+                    stable260_rejectCount++;
                 }
-
-                dbg_xor380_b0 = xor380[0];
-                dbg_xor380_b1 = xor380[1];
-
-                len380_prev = len380;
-                for (uint8_t i = 0; i < len380; i++) pay380_prev[i] = pay380[i];
-                havePrev380 = 1;
             }
 
-            /* start new command tracking (THIS command's payload starts now) */
+            /* ---- START NEW COMMAND TRACKING ---- */
             currentCmd10 = lastCmd;
             payloadBufLen = 0;
-            tenCount = 0;
+            tenCount = 0;      /* INA 2-dummy-bit chunk handling */
             byteShift = 0;
             byteBitCount = 0;
 
-            /* reset ISA assembler */
+            /* keep a short ring buffer of commands (Live Watch) */
+            cmdRing[cmdRingIdx++ & 0x0F] = lastCmd;
+
+            /* reset ISA assembler for next command */
             isa10 = 0;
             isaBitCount = 0;
+
+            /* legacy 3457A stuff can stay below if you still need it */
+            payloadBytesGot = 0;
+            frameReady = 0;
+
+            if (lastCmd == 0x028) { payloadBytesExpected = 6; currentTarget = 1; }
+            else if (lastCmd == 0x068) { payloadBytesExpected = 6; currentTarget = 2; }
+            else if (lastCmd == 0x0A8) { payloadBytesExpected = 6; currentTarget = 3; }
+            else if (lastCmd == 0x2F0) { payloadBytesExpected = 2; currentTarget = 4; }
+            else { payloadBytesExpected = 0; currentTarget = 0; }
+
+            lastExpected = payloadBytesExpected;
         }
     }
+
+
 
     /* ================= INA ================= */
     else {
