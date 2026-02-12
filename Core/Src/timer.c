@@ -98,7 +98,7 @@ volatile uint8_t  regA[6], regB[6], regC[6];
 volatile uint8_t  ann[2];
 
 // Internal decode state
-static uint8_t  prevSync = 0;
+//static uint8_t  prevSync = 0;
 
 static uint8_t currentTarget = 0;  // 1=A,2=B,3=C,4=ANN,5=X(2E0)
 
@@ -172,8 +172,8 @@ volatile uint32_t isaCmdCompleteCount = 0;
 volatile uint32_t isaCmdLowNibbleZeroCount = 0;
 volatile uint32_t isaCmdLowNibbleNonZeroCount = 0;
 //volatile uint16_t lastCmd10 = 0;
-volatile uint8_t isaGap2 = 0;
-volatile uint8_t inaGap2 = 0;
+//volatile uint8_t isaGap2 = 0;
+//volatile uint8_t inaGap2 = 0;
 static uint8_t skipThisClock = 0;
 volatile uint32_t cmd_000_1FF = 0;
 volatile uint32_t cmd_200_2FF = 0;
@@ -190,11 +190,11 @@ volatile uint8_t  seqIdx = 0;
 
 volatile uint8_t  inaBytesSinceLastCmd = 0;
 
-volatile uint8_t  lastPayload[64];
-volatile uint8_t  lastPayloadLen = 0;
+//volatile uint8_t  lastPayload[64];
+//volatile uint8_t  lastPayloadLen = 0;
 
-static uint8_t payloadBuf[64];
-static uint8_t payloadBufLen = 0;
+//static uint8_t payloadBuf[64];
+//static uint8_t payloadBufLen = 0;
 static uint16_t currentCmd10 = 0;
 
 volatile uint8_t  lastLen260 = 0, lastLen380 = 0;
@@ -385,6 +385,126 @@ volatile uint8_t pay260_upd_active = 0;
 
 volatile uint16_t pay260_upd_timeout = 0;
 
+uint32_t pay260_frames_per_sec = 0;
+uint32_t pay260_upd_per_sec = 0;
+uint32_t pay260_frames_in_window = 0;
+uint32_t pay260_upd_in_window = 0;
+uint32_t pay260_rate_last_tick = 0;
+
+/* ---- 0x260 frame-rate meters (units: frames/sec) ---- */
+volatile uint32_t fps260 = 0;                 /* measured 0x260 frames/sec */
+volatile uint32_t fps260_win_count = 0;
+volatile uint32_t fps260_last_ms = 0;
+
+volatile uint32_t fps260_upd = 0;             /* measured update/write pkts/sec (30,24,7) */
+volatile uint32_t fps260_upd_win_count = 0;
+volatile uint32_t fps260_upd_last_ms = 0;
+
+/* Optional: total counters (handy sanity checks) */
+volatile uint32_t cnt260_total = 0;
+volatile uint32_t cnt260_upd_total = 0;
+
+#define MS_PER_SEC 1000u
+
+uint32_t pay260_upd_deadline_ms = 0;     /* absolute tick when update-capture stops */
+uint32_t pay260_upd_window_ms = 2500;  /* capture window length in ms (tweakable) */
+
+//volatile uint8_t inaGap2 = 0; // counts down 2 dummy clocks after SYNC falling edge
+
+uint8_t isaTenCount;
+
+uint8_t isaByteShift;
+
+uint8_t isaByteBitCount;
+
+uint8_t isaCmdBytes[4];
+
+uint8_t isaCmdByteCount;
+
+//uint8_t currentCmdBytes[8];
+
+//uint8_t currentCmdLen;
+
+//uint8_t currentCmdId;
+
+//uint8_t lastCmdBytes[8];
+
+//uint8_t lastCmdLen;
+
+//uint8_t lastCmdId;
+
+uint8_t payloadBuf[128];
+
+uint16_t payloadBufLen;
+
+//uint8_t lastPayload[128];
+
+//uint16_t lastPayloadLen;
+//static uint8_t  prevSync = 0;
+
+//static uint8_t  isaGap2 = 0;
+//static uint8_t  inaGap2 = 0;
+
+//static uint8_t  isaShift = 0;
+//static uint8_t  isaBitCount8 = 0;
+//static uint8_t  isaBytes[8];
+//static uint8_t  isaLen = 0;
+
+//static uint8_t  inaShift = 0;
+//static uint8_t  inaBitCount8 = 0;
+
+/* 3478A ISA command capture (8-bit, LSB first) */
+static uint8_t  isaCmdByte = 0;
+static uint8_t  isaCmdBitCount = 0;
+static uint8_t  isaCmdCaptured = 0;   /* 1 once we’ve latched the command for this SYNC-high */
+static uint8_t  isaSyncHighClkCount = 0; /* debug: clocks seen while SYNC high */
+
+/* ================= 3478A ISA/INA GLOBALS ================= */
+
+volatile uint8_t  prevSync = 0;
+
+volatile uint8_t  isaGap2 = 0;
+volatile uint8_t  inaGap2 = 0;
+
+volatile uint8_t  isaShift = 0;
+volatile uint8_t  isaBitCount8 = 0;
+volatile uint8_t  isaBytes[8];
+volatile uint8_t  isaLen = 0;
+
+volatile uint8_t  inaShift = 0;
+volatile uint8_t  inaBitCount8 = 0;
+
+volatile uint8_t  currentCmdBytes[8];
+volatile uint8_t  currentCmdLen = 0;
+volatile uint8_t  currentCmdId = 0;
+
+volatile uint8_t  lastCmdBytes[8];
+volatile uint8_t  lastCmdLen = 0;
+volatile uint8_t  lastCmdId = 0;
+
+volatile uint16_t lastPayloadLen = 0;
+volatile uint8_t  lastPayload[128];   /* make big enough */
+
+//uint8_t prevPwo = 0;
+uint8_t pwoNow = 0;
+
+volatile uint32_t dbg_sync_rise = 0;
+volatile uint32_t dbg_sync_fall = 0;
+volatile uint32_t dbg_isa_bits = 0;
+volatile uint32_t dbg_isa_bytes = 0;
+volatile uint32_t dbg_ina_bytes = 0;
+
+uint8_t prevPwo = 0;
+
+//volatile uint8_t  prevSync = 0;
+
+//volatile uint8_t  isaShift = 0;
+//volatile uint8_t  isaBitCount8 = 0;
+volatile uint8_t  isaBytes[8];
+//volatile uint8_t  isaLen = 0;
+
+//volatile uint8_t  inaShift = 0;
+//volatile uint8_t  inaBitCount8 = 0;
 
 
 
@@ -470,455 +590,145 @@ void DMM_HandleO2Clock(void)
     }
 
 
-    /* ================= ISA ================= */
+    /* ================= ISA / INA (3478A variable ISA length) ================= */
 
-/* Detect SYNC edges so INA byte framing can be re-synchronized */
     uint8_t syncNow = (syncLevel == GPIO_PIN_SET) ? 1u : 0u;
 
-    /* On falling edge (ISA -> INA), restart INA 10-clock framing */
-    if ((prevSyncLevel == 1u) && (syncNow == 0u)) {
-        tenCount = 0;
-        byteShift = 0;
-        byteBitCount = 0;
-    }
-
-    prevSyncLevel = syncNow;
-
-
-    if (syncLevel == GPIO_PIN_SET) {
-
-        dbg_inISA++;
-
-        isaBranchHits++;
-
-        uint8_t bit = (uint8_t)HAL_GPIO_ReadPin(DMM_ISA_GPIO_Port, DMM_ISA_Pin) & 1u;
-        lastBit = bit;
-        if (bit) lastBitOnes++;
-
-        isaBuffer[isaIndex++] = bit;
-        isaIndex %= MAX_BUFFER_SIZE;
-        ISAcount++;
-
-        /* ---- build 10-bit ISA command (LSB first) ---- */
-        isa10 |= (uint16_t)(bit << isaBitCount);
-        isaBitCount++;
-
-        if (isaBitCount == 10) {
-
-            /* 3478A test counters (DO NOT reset these here) */
-            isaCmdCompleteCount++;
-            lastCmd10 = isa10;
-
-            if ((lastCmd10 & 0x000F) == 0) isaCmdLowNibbleZeroCount++;
-            else                           isaCmdLowNibbleNonZeroCount++;
-
-            lastCmd = isa10;        /* FULL 10-bit command */
-
-            /* ---- CLOSE OUT PREVIOUS COMMAND PAYLOAD ---- */
-            lastCmdPrev = currentCmd10;
-            lastInaLenPrev = payloadBufLen;
-
-            /* snapshot payloadBuf -> lastPayload (for Live Watch / decode) */
-            lastPayloadLen = payloadBufLen;
-            if (lastPayloadLen > sizeof(lastPayload)) lastPayloadLen = sizeof(lastPayload);
-
-            for (uint8_t i = 0; i < lastPayloadLen; i++) {
-                lastPayload[i] = payloadBuf[i];
-            }
-
-            /* Count 0xFF / 0x00 bytes in the last 0x260 payload (debug for misalignment) */
-            if ((lastCmdPrev & 0x03FF) == 0x260) {
-                uint8_t ff = 0, zz = 0;
-                for (uint8_t i = 0; i < lastPayloadLen; i++) {
-                    if (lastPayload[i] == 0xFF) ff++;
-                    if (lastPayload[i] == 0x00) zz++;
-                }
-                last260_ff_count = ff;
-                last260_00_count = zz;
-            }
-
-            if ((lastCmdPrev & 0x03FF) != 0x260) {
-                len260_raw = 0;
-            }
-
-            /* NEW: always publish raw 0x260 for Live Watch (uses payloadBuf snapshot) */
-            if ((lastCmdPrev & 0x03FF) == 0x260) {
-                len260_raw = (uint8_t)lastPayloadLen;
-                if (len260_raw > sizeof(pay260_raw)) len260_raw = sizeof(pay260_raw);
-                for (uint8_t i = 0; i < len260_raw; i++) {
-                    pay260_raw[i] = lastPayload[i];
-                }
-                for (uint8_t i = len260_raw; i < 64; i++) {
-                    pay260_raw[i] = 0;
-                }
-
-                /* NEW: if requested, capture THIS 0x260 frame as the "next" frame */
-                if (pay260_wait_next == 1) {
-                    len260_raw_next = (uint8_t)lastPayloadLen;
-                    if (len260_raw_next > sizeof(pay260_raw_next)) len260_raw_next = sizeof(pay260_raw_next);
-                    for (uint8_t i = 0; i < len260_raw_next; i++) {
-                        pay260_raw_next[i] = lastPayload[i];
-                    }
-                    for (uint8_t i = len260_raw_next; i < 64; i++) {
-                        pay260_raw_next[i] = 0;
-                    }
-
-                    /* Mirror into latched2 so you only need to watch one array */
-                    len260_raw_latched2 = len260_raw_next;
-                    if (len260_raw_latched2 > sizeof(pay260_raw_latched2)) len260_raw_latched2 = sizeof(pay260_raw_latched2);
-                    for (uint8_t i = 0; i < len260_raw_latched2; i++) {
-                        pay260_raw_latched2[i] = pay260_raw_next[i];
-                    }
-                    for (uint8_t i = len260_raw_latched2; i < 64; i++) {
-                        pay260_raw_latched2[i] = 0;
-                    }
-
-                    pay260_wait_next = 0;
-                }
-
-                /* NEW: capture consecutive 0x260 frames after latch */
-                if ((pay260_seq_active == 1) && (pay260_seq_count < 6)) {
-
-                    uint8_t idx = pay260_seq_count;
-                    uint8_t L = (uint8_t)lastPayloadLen;
-                    if (L > 32) L = 32;
-
-                    pay260_seq_len[idx] = L;
-                    for (uint8_t i = 0; i < L; i++) {
-                        pay260_seq[idx][i] = lastPayload[i];
-                    }
-                    for (uint8_t i = L; i < 32; i++) {
-                        pay260_seq[idx][i] = 0;
-                    }
-
-                    pay260_seq_count++;
-
-                    if (pay260_seq_count >= 6) {
-                        pay260_seq_active = 0;   /* done */
-                    }
-                }
-
-                /* NEW: capture only update/write packets that start 30,24,7 */
-                if (pay260_upd_active == 1) {
-
-                    /* If this 0x260 is an update/write packet (starts 30,24,7), store it */
-                    if ((pay260_upd_count < 4) &&
-                        (len260_raw >= 3) &&
-                        (pay260_raw[0] == 30) &&
-                        (pay260_raw[1] == 24) &&
-                        (pay260_raw[2] == 7)) {
-
-                        uint8_t idx = pay260_upd_count;
-                        uint8_t L = (uint8_t)lastPayloadLen;
-                        if (L > 32) L = 32;
-
-                        pay260_upd_len[idx] = L;
-                        for (uint8_t i = 0; i < L; i++) pay260_upd[idx][i] = lastPayload[i];
-                        for (uint8_t i = L; i < 32; i++) pay260_upd[idx][i] = 0;
-
-                        pay260_upd_count++;
-
-                        /* IMPORTANT: reset the timeout every time we successfully capture one */
-                        pay260_upd_timeout = 400;
-
-                        if (pay260_upd_count >= 4) {
-                            pay260_upd_active = 0;
-                        }
-                    }
-                    else {
-                        /* Not an update/write packet: tick down timeout */
-                        if (pay260_upd_timeout == 0) {
-                            pay260_upd_active = 0;
-                        }
-                        else {
-                            pay260_upd_timeout--;
-                        }
-                    }
-                }
-
-            }
-
-            /* ---- 0x260 DIFF + LATCH (armed by pay260_latch_enable) ---- */
-            static uint8_t pay260_raw_prev[64];
-
-            static uint8_t pay260_latch_skip = 0;              /* frames to skip after arming */
-            static uint8_t pay260_latch_enable_prev = 0;       /* detect 0->1 arm */
-            static uint8_t pay260_latch_ignore_first = 0;      /* ignore first latch candidate after arming */
-
-            if ((lastCmdPrev & 0x03FF) == 0x260) {
-
-                /* Detect arm (Live Watch sets pay260_latch_enable 0 -> 1) */
-                if ((pay260_latch_enable_prev == 0) && (pay260_latch_enable == 1)) {
-                    pay260_latch_skip = 6;            /* let prev/diff settle */
-                    pay260_latch_ignore_first = 1;    /* ignore first candidate after skip */
-                    pay260_latch_timeout = 30;        /* allow ~30 0x260 frames to latch, then auto-cancel */
-
-                    /* Clear old latched data when you arm */
-                    pay260_diff_latched_valid = 0;
-                    for (uint8_t i = 0; i < 64; i++) pay260_diff_latched[i] = 0;
-                    for (uint8_t i = 0; i < 64; i++) pay260_raw_latched[i] = 0;
-                    for (uint8_t i = 0; i < 64; i++) pay260_raw_latched2[i] = 0;
-                    for (uint8_t i = 0; i < 64; i++) pay260_raw_next[i] = 0;
-                    len260_diff_latched = 0;
-                    len260_raw_latched = 0;
-                    len260_raw_latched2 = 0;
-                    len260_raw_next = 0;
-
-                    /* Reset next/sequence machinery */
-                    pay260_wait_next = 0;
-                    pay260_seq_active = 0;
-                    pay260_seq_count = 0;
-                    for (uint8_t n = 0; n < 6; n++) {
-                        pay260_seq_len[n] = 0;
-                        for (uint8_t m = 0; m < 32; m++) pay260_seq[n][m] = 0;
-                    }
-
-                    /* NEW: start update/write capture immediately on arm */
-                    pay260_upd_active = 1;
-                    pay260_upd_count = 0;
-                    pay260_upd_timeout = 400;   /* <-- CHANGED: longer, and refreshed on each hit */
-                    for (uint8_t n = 0; n < 4; n++) {
-                        pay260_upd_len[n] = 0;
-                        for (uint8_t m = 0; m < 32; m++) pay260_upd[n][m] = 0;
-                    }
-                }
-
-                pay260_latch_enable_prev = pay260_latch_enable;
-
-                /* Seed previous frame once */
-                if (pay260_prev_valid == 0) {
-                    for (uint8_t i = 0; i < 64; i++) pay260_raw_prev[i] = pay260_raw[i];
-                    for (uint8_t i = 0; i < 64; i++) pay260_diff[i] = 0;
-                    len260_diff = len260_raw;
-                    pay260_prev_valid = 1;
-                }
-                else {
-
-                    /* compute diff */
-                    len260_diff = len260_raw;
-                    if (len260_diff > 64) len260_diff = 64;
-
-                    for (uint8_t i = 0; i < len260_diff; i++) {
-                        pay260_diff[i] = pay260_raw[i] ^ pay260_raw_prev[i];
-                        pay260_raw_prev[i] = pay260_raw[i];
-                    }
-                    for (uint8_t i = len260_diff; i < 64; i++) {
-                        pay260_diff[i] = 0;
-                        pay260_raw_prev[i] = 0;
-                    }
-
-                    /* If we’re armed, optionally skip frames first */
-                    if (pay260_latch_enable == 1) {
-
-                        /* Decrement timeout and auto-cancel */
-                        if (pay260_latch_timeout == 0) {
-                            pay260_latch_enable = 0;   /* timed out */
-                        }
-                        else {
-                            pay260_latch_timeout--;
-                        }
-
-                        if (pay260_latch_enable == 1) {   /* still armed */
-
-                            if (pay260_latch_skip != 0) {
-                                pay260_latch_skip--;
-                            }
-                            else if (pay260_diff_latched_valid == 0) {
-
-                                if (pay260_latch_ignore_first) {
-                                    pay260_latch_ignore_first = 0;
-                                }
-                                else {
-                                    /* Latch first interesting (non-blink) diff */
-                                    for (uint8_t i = 1; i < len260_diff; i++) {   /* ignore byte 0 (blink) */
-                                        if (pay260_diff[i] != 0) {
-
-                                            /* Only latch the “update/write” 0x260 packet: starts 30,24,7 */
-                                            if (!(len260_raw >= 3 &&
-                                                pay260_raw[0] == 30 &&
-                                                pay260_raw[1] == 24 &&
-                                                pay260_raw[2] == 7)) {
-                                                break;  /* not the packet we want this frame */
-                                            }
-
-                                            len260_diff_latched = len260_diff;
-                                            for (uint8_t j = 0; j < len260_diff_latched; j++) {
-                                                pay260_diff_latched[j] = pay260_diff[j];
-                                            }
-                                            for (uint8_t j = len260_diff_latched; j < 64; j++) {
-                                                pay260_diff_latched[j] = 0;
-                                            }
-
-                                            /* Snapshot raw at the same moment (this is the update/write packet) */
-                                            len260_raw_latched = len260_raw;
-                                            if (len260_raw_latched > sizeof(pay260_raw_latched)) len260_raw_latched = sizeof(pay260_raw_latched);
-                                            for (uint8_t k = 0; k < len260_raw_latched; k++) {
-                                                pay260_raw_latched[k] = pay260_raw[k];
-                                            }
-                                            for (uint8_t k = len260_raw_latched; k < 64; k++) {
-                                                pay260_raw_latched[k] = 0;
-                                            }
-
-                                            pay260_diff_latched_valid = 1;
-
-                                            /* Request capture of the VERY NEXT 0x260 frame */
-                                            pay260_wait_next = 1;
-
-                                            /* Start capturing the next 6 consecutive 0x260 frames */
-                                            pay260_seq_active = 1;
-                                            pay260_seq_count = 0;
-                                            for (uint8_t n = 0; n < 6; n++) {
-                                                pay260_seq_len[n] = 0;
-                                                for (uint8_t m = 0; m < 32; m++) pay260_seq[n][m] = 0;
-                                            }
-
-                                            pay260_latch_enable = 0;   /* one-shot latch */
-                                            pay260_latch_timeout = 0;
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            dbg_lastCmdPrev = lastCmdPrev;
-
-            /* ---- 0x260 STABILITY LATCH (ignore byte0 DP blink 0x60) ---- */
-            if ((lastCmdPrev & 0x03FF) == 0x260 && (lastPayloadLen == 20 || lastPayloadLen == 31)) {
-
-                uint8_t stable = 0;
-
-                if (lastPayloadLen == 20) {
-
-                    if (havePrev260_20) {
-                        stable = 1;
-                        for (uint8_t i = 0; i < 20; i++) {
-                            if (i == 0) {
-                                uint8_t x = (uint8_t)(lastPayload[0] ^ prev260_20[0]);
-                                if (x != 0x00 && x != 0x60) { stable = 0; break; }  /* allow DP blink */
-                            }
-                            else {
-                                if (lastPayload[i] != prev260_20[i]) { stable = 0; break; }
-                            }
-                        }
-                    }
-
-                    for (uint8_t i = 0; i < 20; i++) prev260_20[i] = lastPayload[i];
-                    havePrev260_20 = 1;
-
-                }
-                else { /* 31 */
-
-                    if (havePrev260_31) {
-                        stable = 1;
-                        for (uint8_t i = 0; i < 31; i++) {
-                            if (i == 0) {
-                                uint8_t x = (uint8_t)(lastPayload[0] ^ prev260_31[0]);
-                                if (x != 0x00 && x != 0x60) { stable = 0; break; }  /* allow DP blink */
-                            }
-                            else {
-                                if (lastPayload[i] != prev260_31[i]) { stable = 0; break; }
-                            }
-                        }
-                    }
-
-                    for (uint8_t i = 0; i < 31; i++) prev260_31[i] = lastPayload[i];
-                    havePrev260_31 = 1;
-                }
-
-                if (stable) {
-                    /* ACCEPT: publish a clean, stable payload */
-                    stable260_acceptCount++;
-
-                    len260 = (uint8_t)lastPayloadLen;
-                    if (len260 > sizeof(pay260)) len260 = sizeof(pay260);
-                    for (uint8_t i = 0; i < len260; i++) pay260[i] = lastPayload[i];
-                }
-                else {
-                    stable260_rejectCount++;
-                }
-            }
-
-            /* ---- START NEW COMMAND TRACKING ---- */
-            currentCmd10 = lastCmd;
-            payloadBufLen = 0;
-            tenCount = 0;      /* INA 2-dummy-bit chunk handling */
-            byteShift = 0;
-            byteBitCount = 0;
-
-            /* keep a short ring buffer of commands (Live Watch) */
-            cmdRing[cmdRingIdx++ & 0x0F] = lastCmd;
-
-            /* reset ISA assembler for next command */
-            isa10 = 0;
-            isaBitCount = 0;
-
-            /* legacy 3457A stuff can stay below if you still need it */
-            payloadBytesGot = 0;
-            frameReady = 0;
-
-            if (lastCmd == 0x028) { payloadBytesExpected = 6; currentTarget = 1; }
-            else if (lastCmd == 0x068) { payloadBytesExpected = 6; currentTarget = 2; }
-            else if (lastCmd == 0x0A8) { payloadBytesExpected = 6; currentTarget = 3; }
-            else if (lastCmd == 0x2F0) { payloadBytesExpected = 2; currentTarget = 4; }
-            else { payloadBytesExpected = 0; currentTarget = 0; }
-
-            lastExpected = payloadBytesExpected;
+    /* IMPORTANT:
+       prevSync (and the other state vars: isaGap2/inaGap2/isaShift/.../isaLen/payloadBufLen)
+       MUST be static or global and MUST NOT be re-initialised each ISR call.
+       If prevSync is a local auto variable, dbg_sync_rise/fall will stay at 0 forever. */
+
+       /* --------- EDGE: INA -> ISA (SYNC rising) --------- */
+    if ((prevSync == 0u) && (syncNow == 1u)) {
+
+        /* CLOSE OUT PREVIOUS INA payload (belongs to previous command) */
+        lastCmdId = currentCmdId;
+        lastCmdLen = currentCmdLen;
+
+        for (uint8_t i = 0; i < lastCmdLen && i < sizeof(lastCmdBytes); i++) {
+            lastCmdBytes[i] = currentCmdBytes[i];
         }
+        for (uint8_t i = lastCmdLen; i < sizeof(lastCmdBytes); i++) {
+            lastCmdBytes[i] = 0;
+        }
+
+        lastPayloadLen = payloadBufLen;
+        if (lastPayloadLen > sizeof(lastPayload)) lastPayloadLen = sizeof(lastPayload);
+
+        for (uint16_t i = 0; i < lastPayloadLen; i++) {
+            lastPayload[i] = payloadBuf[i];
+        }
+
+        /* Helpful mirrors for your existing debug */
+        lastCmdPrev = lastCmdId;
+        lastInaLenPrev = (uint16_t)payloadBufLen;
+
+        /* START NEW ISA burst */
+        isaGap2 = 2;
+        isaShift = 0;
+        isaBitCount8 = 0;
+        isaLen = 0;
+
+        /* Reset INA accumulator ready for next INA phase */
+        payloadBufLen = 0;
+        inaGap2 = 0;
+        inaShift = 0;
+        inaBitCount8 = 0;
+
+        dbg_sync_rise++;
     }
 
+    /* --------- EDGE: ISA -> INA (SYNC falling) --------- */
+    if ((prevSync == 1u) && (syncNow == 0u)) {
 
-    /* ================= INA ================= */
+        /* Finalize ISA burst into currentCmdBytes */
+        currentCmdLen = isaLen;
+
+        for (uint8_t i = 0; i < currentCmdLen && i < sizeof(currentCmdBytes); i++) {
+            currentCmdBytes[i] = isaBytes[i];
+        }
+        for (uint8_t i = currentCmdLen; i < sizeof(currentCmdBytes); i++) {
+            currentCmdBytes[i] = 0;
+        }
+
+        currentCmdId = (currentCmdLen > 0u) ? currentCmdBytes[0] : 0u;
+
+        /* Mirror into your existing debug vars if you want */
+        lastCmd10 = currentCmdId;
+        lastCmd = currentCmdId;
+        currentCmd10 = currentCmdId;
+
+        /* Start INA burst: skip 2 dummy clocks */
+        inaGap2 = 2;
+        inaShift = 0;
+        inaBitCount8 = 0;
+
+        payloadBufLen = 0;
+
+        dbg_sync_fall++;
+    }
+
+    /* Update prevSync AFTER edge handling */
+    prevSync = syncNow;
+
+    /* --------- DATA SAMPLING --------- */
+    if (syncNow == 1u) {
+
+        /* ================= ISA bytes ================= */
+        uint8_t bit = (uint8_t)HAL_GPIO_ReadPin(DMM_ISA_GPIO_Port, DMM_ISA_Pin) & 1u;
+        dbg_isa_bits++;
+
+        if (isaGap2) {
+            isaGap2--;
+        }
+        else {
+            isaShift |= (uint8_t)(bit << isaBitCount8);
+            isaBitCount8++;
+
+            if (isaBitCount8 == 8u) {
+                if (isaLen < sizeof(isaBytes)) {
+                    isaBytes[isaLen++] = isaShift;
+                }
+                isaShift = 0;
+                isaBitCount8 = 0;
+
+                dbg_isa_bytes++;
+            }
+        }
+
+    }
     else {
 
-        dbg_inINA++;
-
+        /* ================= INA bytes ================= */
         uint8_t bit = (uint8_t)HAL_GPIO_ReadPin(DMM_INA_GPIO_Port, DMM_INA_Pin) & 1u;
 
-        /* 10-clock chunk: 2 dummy bits then 8 data bits */
-        if (tenCount < 2) {
-            tenCount++;
+        if (inaGap2) {
+            inaGap2--;
             return;
         }
 
-        byteShift |= (uint8_t)(bit << byteBitCount);
-        byteBitCount++;
-        tenCount++;
+        inaShift |= (uint8_t)(bit << inaBitCount8);
+        inaBitCount8++;
 
-        if (byteBitCount == 8) {
+        if (inaBitCount8 == 8u) {
 
-            lastDataByte = byteShift;
-
-            /* Detect garbage bursts: consecutive 0xFF bytes strongly indicate bit-slip */
-            if (lastDataByte == 0xFF) {
-                if (ina_ff_run < 255) ina_ff_run++;
-            }
-            else {
-                ina_ff_run = 0;
-            }
-
-            /* If we see 1 consecutive 0xFF bytes, re-sync the 10-clock framing immediately */
-            if (ina_ff_run >= 1) {
-                tenCount = 0;
-                byteShift = 0;
-                byteBitCount = 0;
-                ina_ff_run = 0;
-                return;
-            }
+            uint8_t b = inaShift;
+            inaShift = 0;
+            inaBitCount8 = 0;
 
             if (payloadBufLen < sizeof(payloadBuf)) {
-                payloadBuf[payloadBufLen++] = lastDataByte;
+                payloadBuf[payloadBufLen++] = b;
             }
 
-            /* reset for next 10-clock chunk */
-            tenCount = 0;
-            byteShift = 0;
-            byteBitCount = 0;
+            dbg_ina_bytes++;
         }
     }
+
+
+
+
+
 
 
 
