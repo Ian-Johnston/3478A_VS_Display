@@ -246,8 +246,8 @@ volatile uint8_t  diffCount380 = 0;
 volatile uint32_t chg260_31[64];
 volatile uint32_t chg260_20[64];
 
-volatile uint8_t  pay260_prev31[64];
-volatile uint8_t  pay260_prev20[64];
+//volatile uint8_t  pay260_prev31[64];
+//volatile uint8_t  pay260_prev20[64];
 
 //volatile uint8_t  havePrev31 = 0;
 //volatile uint8_t  havePrev20 = 0;
@@ -283,7 +283,7 @@ volatile uint8_t xor260_31[31];
 volatile uint8_t dbg_xor260_b0, dbg_xor260_b1, dbg_xor260_b2;
 
 volatile uint8_t xor380[31], pay380_prev[31];
-volatile uint8_t havePrev380;
+//volatile uint8_t havePrev380;
 volatile uint8_t dbg_xor380_b0, dbg_xor380_b1;
 
 /* 0x260 extra (len 20) */
@@ -298,7 +298,7 @@ static uint8_t candLen260 = 0;
 static uint8_t candValid260 = 0;
 static uint8_t candRepeats260 = 0;
 
-static uint8_t stable260[64];
+//static uint8_t stable260[64];
 static uint8_t stableLen260 = 0;
 static uint32_t stable260Hits = 0;
 
@@ -312,7 +312,7 @@ static uint8_t  last260_raw[64];
 static uint8_t  last260_raw_len = 0;
 
 static uint8_t  stable260[64];
-static uint8_t  stable260_len = 0;
+//static uint8_t  stable260_len = 0;
 
 static uint32_t stable260_acceptCount = 0;
 static uint32_t stable260_rejectCount = 0;
@@ -332,6 +332,59 @@ static uint8_t prev260_20[20];
 
 static uint8_t havePrev260_31 = 0;
 static uint8_t prev260_31[31];
+
+volatile uint8_t  pay260_raw[64];
+volatile uint8_t  len260_raw = 0;
+
+volatile uint8_t payloadIdx = 0;
+volatile uint8_t payload[64];
+
+volatile uint8_t pay260_diff[64];
+volatile uint8_t len260_diff = 0;
+
+volatile uint8_t pay260_diff_latched[64];
+volatile uint8_t len260_diff_latched = 0;
+volatile uint8_t pay260_diff_latched_valid = 0;
+
+volatile uint8_t pay260_prev_valid = 0;
+
+volatile uint8_t pay260_latch_armed = 0;
+
+volatile uint8_t pay260_latch_enable = 0;
+
+volatile uint8_t last260_ff_count = 0;
+volatile uint8_t last260_00_count = 0;
+
+volatile uint8_t prevSyncLevel = 0;
+
+volatile uint8_t ina_ff_run = 0;
+
+volatile uint8_t pay260_raw_latched[64];
+volatile uint8_t len260_raw_latched = 0;
+
+volatile uint8_t pay260_latch_timeout = 0;
+
+volatile uint8_t pay260_raw_latched2[64];
+volatile uint8_t len260_raw_latched2 = 0;
+
+volatile uint8_t pay260_latch_hits = 0;   /* how many update packets captured this arm (0,1,2) */
+
+volatile uint8_t pay260_raw_next[64];
+volatile uint8_t len260_raw_next = 0;
+volatile uint8_t pay260_wait_next = 0;
+
+volatile uint8_t pay260_seq[6][32];
+volatile uint8_t pay260_seq_len[6];
+volatile uint8_t pay260_seq_count = 0;
+volatile uint8_t pay260_seq_active = 0;
+
+volatile uint8_t pay260_upd[4][32];
+volatile uint8_t pay260_upd_len[4];
+volatile uint8_t pay260_upd_count = 0;
+volatile uint8_t pay260_upd_active = 0;
+
+volatile uint16_t pay260_upd_timeout = 0;
+
 
 
 
@@ -416,7 +469,22 @@ void DMM_HandleO2Clock(void)
         return;
     }
 
+
     /* ================= ISA ================= */
+
+/* Detect SYNC edges so INA byte framing can be re-synchronized */
+    uint8_t syncNow = (syncLevel == GPIO_PIN_SET) ? 1u : 0u;
+
+    /* On falling edge (ISA -> INA), restart INA 10-clock framing */
+    if ((prevSyncLevel == 1u) && (syncNow == 0u)) {
+        tenCount = 0;
+        byteShift = 0;
+        byteBitCount = 0;
+    }
+
+    prevSyncLevel = syncNow;
+
+
     if (syncLevel == GPIO_PIN_SET) {
 
         dbg_inISA++;
@@ -458,16 +526,268 @@ void DMM_HandleO2Clock(void)
                 lastPayload[i] = payloadBuf[i];
             }
 
+            /* Count 0xFF / 0x00 bytes in the last 0x260 payload (debug for misalignment) */
+            if ((lastCmdPrev & 0x03FF) == 0x260) {
+                uint8_t ff = 0, zz = 0;
+                for (uint8_t i = 0; i < lastPayloadLen; i++) {
+                    if (lastPayload[i] == 0xFF) ff++;
+                    if (lastPayload[i] == 0x00) zz++;
+                }
+                last260_ff_count = ff;
+                last260_00_count = zz;
+            }
+
+            if ((lastCmdPrev & 0x03FF) != 0x260) {
+                len260_raw = 0;
+            }
+
+            /* NEW: always publish raw 0x260 for Live Watch (uses payloadBuf snapshot) */
+            if ((lastCmdPrev & 0x03FF) == 0x260) {
+                len260_raw = (uint8_t)lastPayloadLen;
+                if (len260_raw > sizeof(pay260_raw)) len260_raw = sizeof(pay260_raw);
+                for (uint8_t i = 0; i < len260_raw; i++) {
+                    pay260_raw[i] = lastPayload[i];
+                }
+                for (uint8_t i = len260_raw; i < 64; i++) {
+                    pay260_raw[i] = 0;
+                }
+
+                /* NEW: if requested, capture THIS 0x260 frame as the "next" frame */
+                if (pay260_wait_next == 1) {
+                    len260_raw_next = (uint8_t)lastPayloadLen;
+                    if (len260_raw_next > sizeof(pay260_raw_next)) len260_raw_next = sizeof(pay260_raw_next);
+                    for (uint8_t i = 0; i < len260_raw_next; i++) {
+                        pay260_raw_next[i] = lastPayload[i];
+                    }
+                    for (uint8_t i = len260_raw_next; i < 64; i++) {
+                        pay260_raw_next[i] = 0;
+                    }
+
+                    /* Mirror into latched2 so you only need to watch one array */
+                    len260_raw_latched2 = len260_raw_next;
+                    if (len260_raw_latched2 > sizeof(pay260_raw_latched2)) len260_raw_latched2 = sizeof(pay260_raw_latched2);
+                    for (uint8_t i = 0; i < len260_raw_latched2; i++) {
+                        pay260_raw_latched2[i] = pay260_raw_next[i];
+                    }
+                    for (uint8_t i = len260_raw_latched2; i < 64; i++) {
+                        pay260_raw_latched2[i] = 0;
+                    }
+
+                    pay260_wait_next = 0;
+                }
+
+                /* NEW: capture consecutive 0x260 frames after latch */
+                if ((pay260_seq_active == 1) && (pay260_seq_count < 6)) {
+
+                    uint8_t idx = pay260_seq_count;
+                    uint8_t L = (uint8_t)lastPayloadLen;
+                    if (L > 32) L = 32;
+
+                    pay260_seq_len[idx] = L;
+                    for (uint8_t i = 0; i < L; i++) {
+                        pay260_seq[idx][i] = lastPayload[i];
+                    }
+                    for (uint8_t i = L; i < 32; i++) {
+                        pay260_seq[idx][i] = 0;
+                    }
+
+                    pay260_seq_count++;
+
+                    if (pay260_seq_count >= 6) {
+                        pay260_seq_active = 0;   /* done */
+                    }
+                }
+
+                /* NEW: capture only update/write packets that start 30,24,7 */
+                if (pay260_upd_active == 1) {
+
+                    /* If this 0x260 is an update/write packet (starts 30,24,7), store it */
+                    if ((pay260_upd_count < 4) &&
+                        (len260_raw >= 3) &&
+                        (pay260_raw[0] == 30) &&
+                        (pay260_raw[1] == 24) &&
+                        (pay260_raw[2] == 7)) {
+
+                        uint8_t idx = pay260_upd_count;
+                        uint8_t L = (uint8_t)lastPayloadLen;
+                        if (L > 32) L = 32;
+
+                        pay260_upd_len[idx] = L;
+                        for (uint8_t i = 0; i < L; i++) pay260_upd[idx][i] = lastPayload[i];
+                        for (uint8_t i = L; i < 32; i++) pay260_upd[idx][i] = 0;
+
+                        pay260_upd_count++;
+
+                        /* IMPORTANT: reset the timeout every time we successfully capture one */
+                        pay260_upd_timeout = 400;
+
+                        if (pay260_upd_count >= 4) {
+                            pay260_upd_active = 0;
+                        }
+                    }
+                    else {
+                        /* Not an update/write packet: tick down timeout */
+                        if (pay260_upd_timeout == 0) {
+                            pay260_upd_active = 0;
+                        }
+                        else {
+                            pay260_upd_timeout--;
+                        }
+                    }
+                }
+
+            }
+
+            /* ---- 0x260 DIFF + LATCH (armed by pay260_latch_enable) ---- */
+            static uint8_t pay260_raw_prev[64];
+
+            static uint8_t pay260_latch_skip = 0;              /* frames to skip after arming */
+            static uint8_t pay260_latch_enable_prev = 0;       /* detect 0->1 arm */
+            static uint8_t pay260_latch_ignore_first = 0;      /* ignore first latch candidate after arming */
+
+            if ((lastCmdPrev & 0x03FF) == 0x260) {
+
+                /* Detect arm (Live Watch sets pay260_latch_enable 0 -> 1) */
+                if ((pay260_latch_enable_prev == 0) && (pay260_latch_enable == 1)) {
+                    pay260_latch_skip = 6;            /* let prev/diff settle */
+                    pay260_latch_ignore_first = 1;    /* ignore first candidate after skip */
+                    pay260_latch_timeout = 30;        /* allow ~30 0x260 frames to latch, then auto-cancel */
+
+                    /* Clear old latched data when you arm */
+                    pay260_diff_latched_valid = 0;
+                    for (uint8_t i = 0; i < 64; i++) pay260_diff_latched[i] = 0;
+                    for (uint8_t i = 0; i < 64; i++) pay260_raw_latched[i] = 0;
+                    for (uint8_t i = 0; i < 64; i++) pay260_raw_latched2[i] = 0;
+                    for (uint8_t i = 0; i < 64; i++) pay260_raw_next[i] = 0;
+                    len260_diff_latched = 0;
+                    len260_raw_latched = 0;
+                    len260_raw_latched2 = 0;
+                    len260_raw_next = 0;
+
+                    /* Reset next/sequence machinery */
+                    pay260_wait_next = 0;
+                    pay260_seq_active = 0;
+                    pay260_seq_count = 0;
+                    for (uint8_t n = 0; n < 6; n++) {
+                        pay260_seq_len[n] = 0;
+                        for (uint8_t m = 0; m < 32; m++) pay260_seq[n][m] = 0;
+                    }
+
+                    /* NEW: start update/write capture immediately on arm */
+                    pay260_upd_active = 1;
+                    pay260_upd_count = 0;
+                    pay260_upd_timeout = 400;   /* <-- CHANGED: longer, and refreshed on each hit */
+                    for (uint8_t n = 0; n < 4; n++) {
+                        pay260_upd_len[n] = 0;
+                        for (uint8_t m = 0; m < 32; m++) pay260_upd[n][m] = 0;
+                    }
+                }
+
+                pay260_latch_enable_prev = pay260_latch_enable;
+
+                /* Seed previous frame once */
+                if (pay260_prev_valid == 0) {
+                    for (uint8_t i = 0; i < 64; i++) pay260_raw_prev[i] = pay260_raw[i];
+                    for (uint8_t i = 0; i < 64; i++) pay260_diff[i] = 0;
+                    len260_diff = len260_raw;
+                    pay260_prev_valid = 1;
+                }
+                else {
+
+                    /* compute diff */
+                    len260_diff = len260_raw;
+                    if (len260_diff > 64) len260_diff = 64;
+
+                    for (uint8_t i = 0; i < len260_diff; i++) {
+                        pay260_diff[i] = pay260_raw[i] ^ pay260_raw_prev[i];
+                        pay260_raw_prev[i] = pay260_raw[i];
+                    }
+                    for (uint8_t i = len260_diff; i < 64; i++) {
+                        pay260_diff[i] = 0;
+                        pay260_raw_prev[i] = 0;
+                    }
+
+                    /* If we’re armed, optionally skip frames first */
+                    if (pay260_latch_enable == 1) {
+
+                        /* Decrement timeout and auto-cancel */
+                        if (pay260_latch_timeout == 0) {
+                            pay260_latch_enable = 0;   /* timed out */
+                        }
+                        else {
+                            pay260_latch_timeout--;
+                        }
+
+                        if (pay260_latch_enable == 1) {   /* still armed */
+
+                            if (pay260_latch_skip != 0) {
+                                pay260_latch_skip--;
+                            }
+                            else if (pay260_diff_latched_valid == 0) {
+
+                                if (pay260_latch_ignore_first) {
+                                    pay260_latch_ignore_first = 0;
+                                }
+                                else {
+                                    /* Latch first interesting (non-blink) diff */
+                                    for (uint8_t i = 1; i < len260_diff; i++) {   /* ignore byte 0 (blink) */
+                                        if (pay260_diff[i] != 0) {
+
+                                            /* Only latch the “update/write” 0x260 packet: starts 30,24,7 */
+                                            if (!(len260_raw >= 3 &&
+                                                pay260_raw[0] == 30 &&
+                                                pay260_raw[1] == 24 &&
+                                                pay260_raw[2] == 7)) {
+                                                break;  /* not the packet we want this frame */
+                                            }
+
+                                            len260_diff_latched = len260_diff;
+                                            for (uint8_t j = 0; j < len260_diff_latched; j++) {
+                                                pay260_diff_latched[j] = pay260_diff[j];
+                                            }
+                                            for (uint8_t j = len260_diff_latched; j < 64; j++) {
+                                                pay260_diff_latched[j] = 0;
+                                            }
+
+                                            /* Snapshot raw at the same moment (this is the update/write packet) */
+                                            len260_raw_latched = len260_raw;
+                                            if (len260_raw_latched > sizeof(pay260_raw_latched)) len260_raw_latched = sizeof(pay260_raw_latched);
+                                            for (uint8_t k = 0; k < len260_raw_latched; k++) {
+                                                pay260_raw_latched[k] = pay260_raw[k];
+                                            }
+                                            for (uint8_t k = len260_raw_latched; k < 64; k++) {
+                                                pay260_raw_latched[k] = 0;
+                                            }
+
+                                            pay260_diff_latched_valid = 1;
+
+                                            /* Request capture of the VERY NEXT 0x260 frame */
+                                            pay260_wait_next = 1;
+
+                                            /* Start capturing the next 6 consecutive 0x260 frames */
+                                            pay260_seq_active = 1;
+                                            pay260_seq_count = 0;
+                                            for (uint8_t n = 0; n < 6; n++) {
+                                                pay260_seq_len[n] = 0;
+                                                for (uint8_t m = 0; m < 32; m++) pay260_seq[n][m] = 0;
+                                            }
+
+                                            pay260_latch_enable = 0;   /* one-shot latch */
+                                            pay260_latch_timeout = 0;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             dbg_lastCmdPrev = lastCmdPrev;
 
             /* ---- 0x260 STABILITY LATCH (ignore byte0 DP blink 0x60) ---- */
             if ((lastCmdPrev & 0x03FF) == 0x260 && (lastPayloadLen == 20 || lastPayloadLen == 31)) {
-
-                /* prev buffers must be global or static */
-                /* Add these near your globals:
-                   static uint8_t prev260_20[20], prev260_31[31];
-                   static uint8_t havePrev260_20 = 0, havePrev260_31 = 0;
-                */
 
                 uint8_t stable = 0;
 
@@ -478,7 +798,7 @@ void DMM_HandleO2Clock(void)
                         for (uint8_t i = 0; i < 20; i++) {
                             if (i == 0) {
                                 uint8_t x = (uint8_t)(lastPayload[0] ^ prev260_20[0]);
-                                if (x != 0x00 && x != 0x60) { stable = 0; break; }  // allow DP blink
+                                if (x != 0x00 && x != 0x60) { stable = 0; break; }  /* allow DP blink */
                             }
                             else {
                                 if (lastPayload[i] != prev260_20[i]) { stable = 0; break; }
@@ -497,7 +817,7 @@ void DMM_HandleO2Clock(void)
                         for (uint8_t i = 0; i < 31; i++) {
                             if (i == 0) {
                                 uint8_t x = (uint8_t)(lastPayload[0] ^ prev260_31[0]);
-                                if (x != 0x00 && x != 0x60) { stable = 0; break; }  // allow DP blink
+                                if (x != 0x00 && x != 0x60) { stable = 0; break; }  /* allow DP blink */
                             }
                             else {
                                 if (lastPayload[i] != prev260_31[i]) { stable = 0; break; }
@@ -516,10 +836,8 @@ void DMM_HandleO2Clock(void)
                     len260 = (uint8_t)lastPayloadLen;
                     if (len260 > sizeof(pay260)) len260 = sizeof(pay260);
                     for (uint8_t i = 0; i < len260; i++) pay260[i] = lastPayload[i];
-
                 }
                 else {
-                    /* REJECT: still settling (or only have 1st frame) */
                     stable260_rejectCount++;
                 }
             }
@@ -553,7 +871,6 @@ void DMM_HandleO2Clock(void)
     }
 
 
-
     /* ================= INA ================= */
     else {
 
@@ -575,6 +892,23 @@ void DMM_HandleO2Clock(void)
 
             lastDataByte = byteShift;
 
+            /* Detect garbage bursts: consecutive 0xFF bytes strongly indicate bit-slip */
+            if (lastDataByte == 0xFF) {
+                if (ina_ff_run < 255) ina_ff_run++;
+            }
+            else {
+                ina_ff_run = 0;
+            }
+
+            /* If we see 1 consecutive 0xFF bytes, re-sync the 10-clock framing immediately */
+            if (ina_ff_run >= 1) {
+                tenCount = 0;
+                byteShift = 0;
+                byteBitCount = 0;
+                ina_ff_run = 0;
+                return;
+            }
+
             if (payloadBufLen < sizeof(payloadBuf)) {
                 payloadBuf[payloadBufLen++] = lastDataByte;
             }
@@ -585,6 +919,9 @@ void DMM_HandleO2Clock(void)
             byteBitCount = 0;
         }
     }
+
+
+
 
 
 
