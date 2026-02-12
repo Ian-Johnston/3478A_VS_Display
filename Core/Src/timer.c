@@ -539,8 +539,6 @@ static void LatchStable260(const uint8_t* frame, uint8_t len)
 
 
 
-//***********************************************************************************
-
 void DMM_HandleO2Clock(void)
 {
     GPIO_PinState syncLevel = HAL_GPIO_ReadPin(DMM_SYNC_GPIO_Port, DMM_SYNC_Pin);
@@ -553,64 +551,28 @@ void DMM_HandleO2Clock(void)
 
     O2Count++;
 
+    /* Only decode while PWO is active */
     if (HAL_GPIO_ReadPin(DMM_PWO_GPIO_Port, DMM_PWO_Pin) != GPIO_PIN_SET) {
         return;
     }
 
-    /* -------- SYNC edge detection & re-alignment -------- */
-    {
-        uint8_t syncNow = (syncLevel == GPIO_PIN_SET) ? 1u : 0u;
-
-        if (syncNow != prevSync) {
-
-            /* reset common byte assembly */
-            tenCount = 0;
-            byteShift = 0;
-            byteBitCount = 0;
-
-            skipThisClock = 1;   // <<< ADD THIS LINE
-
-            if (syncNow) {
-                /* entering ISA phase */
-                isa10 = 0;
-                isaBitCount = 0;
-                isaGap2 = 2;
-            }
-            else {
-                /* entering INA phase → 2 dummy clocks */
-                inaGap2 = 2;
-            }
-        }
-        prevSync = syncNow;
-    }
-
-    if (skipThisClock) {
-        skipThisClock = 0;
-        return;
-    }
-
-
     /* ================= ISA / INA (3478A variable ISA length) ================= */
 
+    /* SYNC level (sampled each O2 clock) */
     uint8_t syncNow = (syncLevel == GPIO_PIN_SET) ? 1u : 0u;
 
-    /* IMPORTANT:
-       prevSync (and the other state vars: isaGap2/inaGap2/isaShift/.../isaLen/payloadBufLen)
-       MUST be static or global and MUST NOT be re-initialised each ISR call.
-       If prevSync is a local auto variable, dbg_sync_rise/fall will stay at 0 forever. */
+    /* --------- EDGE DETECT (MUST RUN EVERY O2 CLOCK) --------- */
 
-       /* --------- EDGE: INA -> ISA (SYNC rising) --------- */
+    /* SYNC rising: INA -> ISA */
     if ((prevSync == 0u) && (syncNow == 1u)) {
 
         /* CLOSE OUT PREVIOUS INA payload (belongs to previous command) */
         lastCmdId = currentCmdId;
         lastCmdLen = currentCmdLen;
 
-        for (uint8_t i = 0; i < lastCmdLen && i < sizeof(lastCmdBytes); i++) {
-            lastCmdBytes[i] = currentCmdBytes[i];
-        }
-        for (uint8_t i = lastCmdLen; i < sizeof(lastCmdBytes); i++) {
-            lastCmdBytes[i] = 0;
+        for (uint8_t i = 0; i < sizeof(lastCmdBytes); i++) {
+            if (i < lastCmdLen && i < sizeof(currentCmdBytes)) lastCmdBytes[i] = currentCmdBytes[i];
+            else                                               lastCmdBytes[i] = 0;
         }
 
         lastPayloadLen = payloadBufLen;
@@ -620,11 +582,11 @@ void DMM_HandleO2Clock(void)
             lastPayload[i] = payloadBuf[i];
         }
 
-        /* Helpful mirrors for your existing debug */
+        /* mirrors (optional) */
         lastCmdPrev = lastCmdId;
         lastInaLenPrev = (uint16_t)payloadBufLen;
 
-        /* START NEW ISA burst */
+        /* START NEW ISA burst: skip 2 dummy clocks */
         isaGap2 = 2;
         isaShift = 0;
         isaBitCount8 = 0;
@@ -638,28 +600,25 @@ void DMM_HandleO2Clock(void)
 
         dbg_sync_rise++;
     }
+    /* SYNC falling: ISA -> INA */
+    else if ((prevSync == 1u) && (syncNow == 0u)) {
 
-    /* --------- EDGE: ISA -> INA (SYNC falling) --------- */
-    if ((prevSync == 1u) && (syncNow == 0u)) {
-
-        /* Finalize ISA burst into currentCmdBytes */
+        /* FINALIZE ISA burst into currentCmdBytes */
         currentCmdLen = isaLen;
 
-        for (uint8_t i = 0; i < currentCmdLen && i < sizeof(currentCmdBytes); i++) {
-            currentCmdBytes[i] = isaBytes[i];
-        }
-        for (uint8_t i = currentCmdLen; i < sizeof(currentCmdBytes); i++) {
-            currentCmdBytes[i] = 0;
+        for (uint8_t i = 0; i < sizeof(currentCmdBytes); i++) {
+            if (i < currentCmdLen && i < sizeof(isaBytes)) currentCmdBytes[i] = isaBytes[i];
+            else                                           currentCmdBytes[i] = 0;
         }
 
         currentCmdId = (currentCmdLen > 0u) ? currentCmdBytes[0] : 0u;
 
-        /* Mirror into your existing debug vars if you want */
+        /* mirrors (optional) */
         lastCmd10 = currentCmdId;
         lastCmd = currentCmdId;
         currentCmd10 = currentCmdId;
 
-        /* Start INA burst: skip 2 dummy clocks */
+        /* START INA burst: skip 2 dummy clocks */
         inaGap2 = 2;
         inaShift = 0;
         inaBitCount8 = 0;
@@ -669,10 +628,8 @@ void DMM_HandleO2Clock(void)
         dbg_sync_fall++;
     }
 
-    /* Update prevSync AFTER edge handling */
-    prevSync = syncNow;
-
     /* --------- DATA SAMPLING --------- */
+
     if (syncNow == 1u) {
 
         /* ================= ISA bytes ================= */
@@ -692,11 +649,9 @@ void DMM_HandleO2Clock(void)
                 }
                 isaShift = 0;
                 isaBitCount8 = 0;
-
                 dbg_isa_bytes++;
             }
         }
-
     }
     else {
 
@@ -705,37 +660,30 @@ void DMM_HandleO2Clock(void)
 
         if (inaGap2) {
             inaGap2--;
-            return;
+            /* do not return; just skip dummy clocks */
         }
+        else {
+            inaShift |= (uint8_t)(bit << inaBitCount8);
+            inaBitCount8++;
 
-        inaShift |= (uint8_t)(bit << inaBitCount8);
-        inaBitCount8++;
+            if (inaBitCount8 == 8u) {
+                uint8_t b = inaShift;
+                inaShift = 0;
+                inaBitCount8 = 0;
 
-        if (inaBitCount8 == 8u) {
+                if (payloadBufLen < sizeof(payloadBuf)) {
+                    payloadBuf[payloadBufLen++] = b;
+                }
 
-            uint8_t b = inaShift;
-            inaShift = 0;
-            inaBitCount8 = 0;
-
-            if (payloadBufLen < sizeof(payloadBuf)) {
-                payloadBuf[payloadBufLen++] = b;
+                dbg_ina_bytes++;
             }
-
-            dbg_ina_bytes++;
         }
     }
 
-
-
-
-
-
-
-
-
-
-
+    /* Update prevSync ONCE, at the very end */
+    prevSync = syncNow;
 }
+
 
 
 void MX_TIM3_Init(void) {
