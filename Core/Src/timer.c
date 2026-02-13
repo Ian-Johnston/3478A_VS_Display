@@ -250,12 +250,34 @@ volatile uint8_t disp3478_diffSeg4_xor[32];
 
 volatile uint8_t  frameLatchModeStatic = 0;   /* set to 1 in Live Watch to latch the next PWO (static or change) */
 
+/* Previous CHANGE decoded stripped lists (for change-vs-change diff) */
+volatile uint8_t disp3478_havePrevChange = 0;
+volatile uint8_t disp3478_prevChangeStripCount[8];
+volatile uint8_t disp3478_prevChangeStripped[8][32];
 
+/* Diff between consecutive CHANGE frames (seg2 and seg4) */
+volatile uint8_t disp3478_diffChgSeg2_first;
+volatile uint8_t disp3478_diffChgSeg2_count;
+volatile uint8_t disp3478_diffChgSeg2_xor[32];
 
+volatile uint8_t disp3478_diffChgSeg4_first;
+volatile uint8_t disp3478_diffChgSeg4_count;
+volatile uint8_t disp3478_diffChgSeg4_xor[32];
+volatile uint8_t disp3478_haveStatic = 0;
+volatile uint8_t disp3478_haveChange = 0;
 
+volatile uint8_t disp3478_prevChangeStripCount4 = 0;
+volatile uint8_t disp3478_prevChangeStripped4[32];
 
-//*************************
-//volatile uint8_t dbgCode[12];
+volatile uint8_t disp3478_diffChgSeg4_first = 0xFF;
+volatile uint8_t disp3478_diffChgSeg4_count = 0;
+volatile uint8_t disp3478_diffChgSeg4_xor[32];
+
+volatile uint8_t disp3478_dbgDiffPrev4[32];
+volatile uint8_t disp3478_dbgDiffCurr4[32];
+
+//*****************************************************************************************
+
 
 
 static uint8_t Same260_AllowBlink(const uint8_t* a, const uint8_t* b, uint8_t len, uint8_t* firstDiffIdx)
@@ -689,7 +711,7 @@ void Decode3478_LatchedFrame(void)
         disp3478_inaStripScore[i] = 0;
     }
 
-    /* diff outputs */
+    /* static-vs-change diff outputs (existing) */
     disp3478_diffSeg2_first = 0xFFu;
     disp3478_diffSeg2_count = 0u;
     for (uint8_t i = 0u; i < 32u; i++) disp3478_diffSeg2_xor[i] = 0u;
@@ -697,6 +719,17 @@ void Decode3478_LatchedFrame(void)
     disp3478_diffSeg4_first = 0xFFu;
     disp3478_diffSeg4_count = 0u;
     for (uint8_t i = 0u; i < 32u; i++) disp3478_diffSeg4_xor[i] = 0u;
+
+    /* change-vs-change diff outputs for seg4 */
+    disp3478_diffChgSeg4_first = 0xFFu;
+    disp3478_diffChgSeg4_count = 0u;
+    for (uint8_t i = 0u; i < 32u; i++) disp3478_diffChgSeg4_xor[i] = 0u;
+
+    /* NEW: snapshot of XOR inputs (seg4) */
+    for (uint8_t i = 0u; i < 32u; i++) {
+        disp3478_dbgDiffPrev4[i] = 0u;
+        disp3478_dbgDiffCurr4[i] = 0u;
+    }
 
     disp3478_sync1_count = 0;
     for (uint8_t i = 0u; i < 64u; i++) disp3478_tagPreview[i] = 0;
@@ -772,75 +805,75 @@ void Decode3478_LatchedFrame(void)
     /* ---------------- Save STATIC or CHANGE copies ---------------- */
     if (frameKindLatched == 2u)
     {
-        /* digit change */
+        disp3478_haveChange = 1u;
+
         for (uint8_t sg = 0u; sg < 8u; sg++)
         {
             disp3478_changeStripCount[sg] = disp3478_inaStripCount[sg];
             for (uint8_t k = 0u; k < 32u; k++)
                 disp3478_changeStripped[sg][k] = disp3478_inaStripped[sg][k];
         }
+
+        /* ---- CHANGE-vs-CHANGE diff for seg4 (with input snapshots) ---- */
+        {
+            uint8_t n = disp3478_changeStripCount[4];
+
+            if (disp3478_havePrevChange == 1u)
+            {
+                uint8_t m = disp3478_prevChangeStripCount4;
+                if (m < n) n = m; /* compare only overlap */
+
+                if (n > 0u)
+                {
+                    uint8_t first = 0xFFu;
+                    uint8_t count = 0u;
+
+                    for (uint8_t i = 0u; i < n; i++)
+                    {
+                        uint8_t a = disp3478_prevChangeStripped4[i];
+                        uint8_t b = disp3478_changeStripped[4][i];
+
+                        disp3478_dbgDiffPrev4[i] = a; /* snapshot */
+                        disp3478_dbgDiffCurr4[i] = b; /* snapshot */
+
+                        uint8_t x = (uint8_t)(a ^ b);
+                        disp3478_diffChgSeg4_xor[i] = x;
+
+                        if (x != 0u)
+                        {
+                            if (first == 0xFFu) first = i;
+                            count++;
+                        }
+                    }
+
+                    /* clear tail so Live Watch doesn't show stale */
+                    for (uint8_t i = n; i < 32u; i++) {
+                        disp3478_dbgDiffPrev4[i] = 0u;
+                        disp3478_dbgDiffCurr4[i] = 0u;
+                        disp3478_diffChgSeg4_xor[i] = 0u;
+                    }
+
+                    disp3478_diffChgSeg4_first = first;
+                    disp3478_diffChgSeg4_count = count;
+                }
+            }
+
+            /* update prev-change always */
+            disp3478_havePrevChange = 1u;
+            disp3478_prevChangeStripCount4 = disp3478_changeStripCount[4];
+            for (uint8_t i = 0u; i < 32u; i++)
+                disp3478_prevChangeStripped4[i] = disp3478_changeStripped[4][i];
+        }
     }
     else
     {
-        /* static */
+        disp3478_haveStatic = 1u;
+
         for (uint8_t sg = 0u; sg < 8u; sg++)
         {
             disp3478_staticStripCount[sg] = disp3478_inaStripCount[sg];
             for (uint8_t k = 0u; k < 32u; k++)
                 disp3478_staticStripped[sg][k] = disp3478_inaStripped[sg][k];
-        }
-    }
-
-    /* ---------------- Compute XOR diffs (seg2 and seg4) ---------------- */
-    {
-        uint8_t sg = 2u;
-        uint8_t n = disp3478_staticStripCount[sg];
-        if (disp3478_changeStripCount[sg] < n) n = disp3478_changeStripCount[sg];
-
-        if (n > 0u)
-        {
-            uint8_t first = 0xFFu;
-            uint8_t count = 0u;
-
-            for (uint8_t i = 0u; i < n; i++)
-            {
-                uint8_t x = (uint8_t)(disp3478_staticStripped[sg][i] ^ disp3478_changeStripped[sg][i]);
-                disp3478_diffSeg2_xor[i] = x;
-                if (x != 0u)
-                {
-                    if (first == 0xFFu) first = i;
-                    count++;
-                }
-            }
-
-            disp3478_diffSeg2_first = first;
-            disp3478_diffSeg2_count = count;
-        }
-    }
-
-    {
-        uint8_t sg = 4u;
-        uint8_t n = disp3478_staticStripCount[sg];
-        if (disp3478_changeStripCount[sg] < n) n = disp3478_changeStripCount[sg];
-
-        if (n > 0u)
-        {
-            uint8_t first = 0xFFu;
-            uint8_t count = 0u;
-
-            for (uint8_t i = 0u; i < n; i++)
-            {
-                uint8_t x = (uint8_t)(disp3478_staticStripped[sg][i] ^ disp3478_changeStripped[sg][i]);
-                disp3478_diffSeg4_xor[i] = x;
-                if (x != 0u)
-                {
-                    if (first == 0xFFu) first = i;
-                    count++;
-                }
-            }
-
-            disp3478_diffSeg4_first = first;
-            disp3478_diffSeg4_count = count;
         }
     }
 
@@ -890,7 +923,6 @@ void Decode3478_LatchedFrame(void)
     disp3478_segLenFlat3 = (disp3478_segCount > 3u) ? disp3478_segLen[3] : 0;
     disp3478_segLenFlat4 = (disp3478_segCount > 4u) ? disp3478_segLen[4] : 0;
 }
-
 
 
 
