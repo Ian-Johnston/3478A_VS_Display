@@ -677,6 +677,19 @@ volatile uint8_t  disp3478_opcode_hits = 0;
 volatile uint8_t  disp3478_saw_1A = 0;
 volatile uint8_t  disp3478_saw_0A = 0;
 
+volatile uint8_t  disp3478_ina_bits[512];
+volatile uint16_t disp3478_ina_bitcount;
+
+volatile uint8_t disp3478_bestInv = 0;
+
+volatile uint64_t disp3478_isaBitsPacked = 0;   // LSB = first ISA bit captured
+volatile uint8_t  disp3478_isaBitsPackedLen = 0;
+
+volatile uint8_t  disp3478_tryScore[2][3];      // [inv][pre]
+volatile uint8_t  disp3478_tryBytes[2][3][8];   // [inv][pre][word], up to 8 words
+volatile uint8_t  disp3478_tryWords = 0;        // number of 10-clock words decoded
+
+
 
 
 
@@ -821,138 +834,160 @@ void DMM_HandleO2Clock(void)
 
 
 
-/* helper: keep this ABOVE Decode3478_LatchedFrame() (file-scope), not inside it */
+
 static uint8_t is_known_opcode(uint8_t b)
 {
-    switch (b) {
-    case 0xFC: case 0xFD: case 0xB8: case 0xC8:
-    case 0x2A: case 0xBC: case 0x1A: case 0x0A:
+    /* 3478A ROM disassembly shows these instruction bytes */
+    switch (b)
+    {
+    case 0xFC:
+    case 0xFD:
+    case 0x24:
+    case 0xB8:
+    case 0xC8:
+    case 0x2A:
+    case 0xBC:
+    case 0x53:
+    case 0x1A:
+    case 0x4F:
+    case 0xD0:
         return 1u;
     default:
         return 0u;
     }
 }
 
+
+
 void Decode3478_LatchedFrame(void)
 {
-    if (frameReady == 0u) return;
+    if (frameReady == 0u)
+        return;
 
     frameReady = 0u;
 
-    disp3478_valid = 0u;
     disp3478_isa_list_len = 0u;
+    disp3478_opcode_hits = 0u;
     disp3478_saw_1A = 0u;
     disp3478_saw_0A = 0u;
+
+    disp3478_bestScore = 0u;
+    disp3478_bestStep = 10u;   /* proven */
+    disp3478_bestPre = 0u;
+    disp3478_bestPost = 0u;
+    disp3478_bestMSB = 0u;    /* assume LSB-first */
+    disp3478_bestOff = 0u;
+    disp3478_bestInv = 1u;    /* proven by your tryScore matrix */
 
     const uint8_t* s = frameO2Latched;
     uint16_t N = frameO2LatchedLen;
     if (N > 512u) N = 512u;
 
-    uint8_t prevSync = (uint8_t)((s[0] >> 2) & 1u);
-
-    uint8_t collectingISA = 0u;
-    uint8_t collectingINA = 0u;
-
-    uint8_t isaShift = 0u;
-    uint8_t isaBitCount = 0u;
-    uint8_t isaBytes[8];
-    uint8_t isaLen = 0u;
-
-    uint8_t inaShift = 0u;
-    uint8_t inaBitCount = 0u;
-    uint8_t inaBytes[64];
-    uint8_t inaLen = 0u;
+    /* Collect ISA bits where SYNC==1 */
+    uint8_t isaBits[128];
+    uint16_t isaBitsLen = 0;
 
     for (uint16_t i = 0; i < N; i++)
     {
-        uint8_t sync = (uint8_t)((s[i] >> 2) & 1u);
-
-        /* Detect SYNC rising */
-        if ((prevSync == 0u) && (sync == 1u))
-        {
-            collectingISA = 1u;
-            collectingINA = 0u;
-
-            isaShift = 0u;
-            isaBitCount = 0u;
-            isaLen = 0u;
-
-            continue;
-        }
-
-        /* Detect SYNC falling */
-        if ((prevSync == 1u) && (sync == 0u))
-        {
-            collectingISA = 0u;
-            collectingINA = 1u;
-
-            inaShift = 0u;
-            inaBitCount = 0u;
-            inaLen = 0u;
-
-            continue;
-        }
-
-        prevSync = sync;
-
-        /* ISA bits */
-        if (collectingISA)
-        {
-            uint8_t bit = (uint8_t)((s[i] >> 1) & 1u);
-
-            isaShift |= (uint8_t)(bit << isaBitCount);
-            isaBitCount++;
-
-            if (isaBitCount == 8u)
-            {
-                if (isaLen < sizeof(isaBytes))
-                    isaBytes[isaLen++] = isaShift;
-
-                isaShift = 0u;
-                isaBitCount = 0u;
-            }
-        }
-
-        /* INA bits */
-        else if (collectingINA)
+        uint8_t sync = (uint8_t)((s[i] >> 1) & 1u);
+        if (sync)
         {
             uint8_t bit = (uint8_t)(s[i] & 1u);
+            if (isaBitsLen < (uint16_t)sizeof(isaBits))
+                isaBits[isaBitsLen++] = bit;
+        }
+    }
 
-            inaShift |= (uint8_t)(bit << inaBitCount);
-            inaBitCount++;
+    disp3478_isa_bits_len = (uint8_t)((isaBitsLen > 255u) ? 255u : isaBitsLen);
 
-            if (inaBitCount == 8u)
+    if (isaBitsLen < 10u)
+        return;
+
+    /* Search offset 0..9 and pre 0..2, with inversion forced, LSB-first */
+    uint8_t bestScore = 0u;
+    uint8_t bestOff = 0u;
+    uint8_t bestPre = 0u;
+
+    for (uint8_t off = 0u; off < 10u; off++)
+    {
+        for (uint8_t pre = 0u; pre < 3u; pre++)
+        {
+            uint8_t score = 0u;
+            uint16_t idx = off;
+
+            while ((uint16_t)(idx + pre + 7u) < isaBitsLen)
             {
-                if (inaLen < sizeof(inaBytes))
-                    inaBytes[inaLen++] = inaShift;
+                uint8_t b = 0u;
+                for (uint8_t k = 0u; k < 8u; k++)
+                {
+                    uint8_t bit = isaBits[idx + pre + k];
+                    /* inversion forced */
+                    bit = (uint8_t)(1u - bit);
+                    b |= (uint8_t)((bit & 1u) << k); /* LSB-first */
+                }
 
-                inaShift = 0u;
-                inaBitCount = 0u;
+                if (is_known_opcode(b))
+                    score++;
+
+                idx = (uint16_t)(idx + 10u);
+            }
+
+            /* choose best; tie-break prefer pre=1, then smaller off */
+            uint8_t take = 0u;
+            if (score > bestScore) take = 1u;
+            else if (score == bestScore && score != 0u)
+            {
+                if (bestPre != 1u && pre == 1u) take = 1u;
+                else if (bestPre == pre && off < bestOff) take = 1u;
+            }
+
+            if (take)
+            {
+                bestScore = score;
+                bestOff = off;
+                bestPre = pre;
             }
         }
     }
 
-    /* Store ISA bytes for inspection */
-    for (uint8_t i = 0; i < isaLen && i < sizeof(disp3478_isa_list); i++)
-        disp3478_isa_list[i] = isaBytes[i];
+    disp3478_bestScore = bestScore;
+    disp3478_bestOff = bestOff;
+    disp3478_bestPre = bestPre;
+    disp3478_bestPost = (uint8_t)(10u - (bestPre + 8u));
+    disp3478_bestMSB = 0u;
+    disp3478_bestInv = 1u;
 
-    disp3478_isa_list_len = isaLen;
+    /* Decode ISA bytes using the chosen off+pre */
+    uint16_t idx = bestOff;
 
-    /* Detect key opcodes from ROM */
-    for (uint8_t i = 0; i < isaLen; i++)
+    while ((uint16_t)(idx + bestPre + 7u) < isaBitsLen)
     {
-        if (isaBytes[i] == 0x1A) disp3478_saw_1A = 1u;
-        if (isaBytes[i] == 0x0A) disp3478_saw_0A = 1u;
-        if (isaBytes[i] == 0xFC) disp3478_opcode_hits++;
+        uint8_t b = 0u;
+        for (uint8_t k = 0u; k < 8u; k++)
+        {
+            uint8_t bit = isaBits[idx + bestPre + k];
+            bit = (uint8_t)(1u - bit); /* invert */
+            b |= (uint8_t)((bit & 1u) << k);
+        }
+
+        if (disp3478_isa_list_len < (uint8_t)sizeof(disp3478_isa_list))
+            disp3478_isa_list[disp3478_isa_list_len++] = b;
+
+        if (is_known_opcode(b))
+        {
+            disp3478_opcode_hits++;
+            if (b == 0x1A) disp3478_saw_1A = 1u;
+            if (b == 0x0A) disp3478_saw_0A = 1u;
+        }
+
+        idx = (uint16_t)(idx + 10u);
     }
-
-    /* For now just expose INA payload raw */
-    for (uint8_t i = 0; i < inaLen && i < sizeof(disp3478_ram); i++)
-        disp3478_ram[i] = inaBytes[i];
-
-    if (inaLen > 0u)
-        disp3478_valid = 1u;
 }
+
+
+
+
+
 
 
 
