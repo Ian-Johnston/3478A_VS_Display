@@ -638,8 +638,8 @@ volatile uint8_t frameReadySticky = 0;
 
 //volatile uint32_t dbg_decode_hits = 0;
 volatile uint8_t  disp3478_bestOff = 0;
-volatile uint8_t  disp3478_bestMSB = 0;
-volatile uint8_t  disp3478_bestScore = 0;
+//volatile uint8_t  disp3478_bestMSB = 0;
+//volatile uint8_t  disp3478_bestScore = 0;
 
 
 volatile uint8_t  disp3478_isa8_lsb[16];
@@ -660,6 +660,13 @@ volatile uint8_t  disp3478_seen_1A = 0;
 volatile uint8_t  disp3478_seen_0A = 0;
 volatile uint8_t  disp3478_opcode_score = 0;
 volatile uint32_t dbg_decode_hits = 0;
+
+
+volatile uint8_t  disp3478_bestMSB = 0;
+volatile uint8_t  disp3478_bestScore = 0;
+volatile uint8_t  disp3478_opcode_hits = 0;
+volatile uint8_t  disp3478_saw_1A = 0;
+volatile uint8_t  disp3478_saw_0A = 0;
 
 
 
@@ -805,29 +812,58 @@ void DMM_HandleO2Clock(void)
 }
 
 
-/* Put this near the top of timer.c (file scope), NOT inside a function */
+
 static uint8_t is_known_opcode(uint8_t b)
 {
     switch (b) {
-    case 0xFC: case 0xFD:
-    case 0xB8: case 0xC8:
-    case 0x2A: case 0xBC:
-    case 0x1A: case 0x0A:
+    case 0xFC: case 0xFD: case 0xB8: case 0xC8:
+    case 0x2A: case 0xBC: case 0x1A: case 0x0A:
         return 1u;
     default:
         return 0u;
     }
 }
 
+static uint8_t assemble8_lsb(const uint8_t* bits, uint16_t start)
+{
+    uint8_t b = 0;
+    for (uint8_t j = 0; j < 8u; j++) {
+        b |= (uint8_t)((bits[start + j] & 1u) << j);
+    }
+    return b;
+}
+
+static uint8_t assemble8_msb(const uint8_t* bits, uint16_t start)
+{
+    uint8_t b = 0;
+    for (uint8_t j = 0; j < 8u; j++) {
+        b = (uint8_t)((b << 1) | (bits[start + j] & 1u));
+    }
+    return b;
+}
+
+static uint8_t assemble4_lsb(const uint8_t* bits, uint16_t start)
+{
+    uint8_t n = 0;
+    n |= (uint8_t)((bits[start + 0u] & 1u) << 0);
+    n |= (uint8_t)((bits[start + 1u] & 1u) << 1);
+    n |= (uint8_t)((bits[start + 2u] & 1u) << 2);
+    n |= (uint8_t)((bits[start + 3u] & 1u) << 3);
+    return (uint8_t)(n & 0x0Fu);
+}
+
 void Decode3478_LatchedFrame(void)
 {
     if (frameReady == 0u) return;
 
-    dbg_decode_hits++;
+    /* consume capture */
+    frameReady = 0u;
 
-    /* Don’t clear frameReady until the end (so you can see it go high) */
     disp3478_valid = 0u;
     disp3478_isa_list_len = 0u;
+    disp3478_opcode_hits = 0u;
+    disp3478_saw_1A = 0u;
+    disp3478_saw_0A = 0u;
 
     for (uint8_t i = 0; i < 12u; i++) {
         disp3478_hi[i] = 0u;
@@ -835,148 +871,159 @@ void Decode3478_LatchedFrame(void)
         disp3478_ram[i] = 0u;
     }
 
-    const uint8_t* s = frameO2Latched;   /* packed: (sync<<2)|(isa<<1)|ina */
+    const uint8_t* s = frameO2Latched; /* packed: (sync<<2)|(isa<<1)|ina */
     uint16_t N = frameO2LatchedLen;
     if (N > 512u) N = 512u;
 
-    /* ------------------------------------------------------------
-       STEP 1: Find best 10-bit-word alignment on ISA stream
-       Word layout we assume: [dummy0][dummy1][b0..b7]  (LSB-first)
-       i.e. payload byte = ISA bits at positions base+2..base+9
-       ------------------------------------------------------------ */
-    uint8_t bestOff = 0u;
-    uint8_t bestScore = 0u;
+    /* -------- split into SYNC-high runs and SYNC-low runs -------- */
+    uint16_t runStart = 0;
+    uint8_t  runSync = (uint8_t)((s[0] >> 2) & 1u);
 
-    for (uint8_t off = 0u; off < 10u; off++) {
+    /* When we see opcode 0x1A/0x0A, we will decode the *next* SYNC-low run */
+    uint8_t pending_hi = 0u;
+    uint8_t pending_lo = 0u;
 
-        uint8_t score = 0u;
-        uint16_t base = off;
+    for (uint16_t i = 1; i <= N; i++) {
 
-        /* Count opcodes found for this alignment */
-        while ((base + 9u) < N) {
+        uint8_t sync = runSync;
+        if (i < N) sync = (uint8_t)((s[i] >> 2) & 1u);
 
-            uint8_t b = 0u;
-            for (uint8_t j = 0u; j < 8u; j++) {
-                uint8_t isaBit = (uint8_t)((s[base + 2u + j] >> 1) & 1u);
-                b |= (uint8_t)(isaBit << j);   /* LSB-first */
-            }
+        /* end of run? */
+        if ((i == N) || (sync != runSync)) {
 
-            if (is_known_opcode(b)) score++;
+            uint16_t runEnd = i; /* [runStart, runEnd) */
+            uint16_t runLen = (runEnd > runStart) ? (runEnd - runStart) : 0u;
 
-            base = (uint16_t)(base + 10u);
-        }
+            if (runLen >= 8u) {
 
-        if (score > bestScore) {
-            bestScore = score;
-            bestOff = off;
-        }
-    }
+                /* ---------------- SYNC HIGH: find opcode bytes inside ISA bits ---------------- */
+                if (runSync == 1u) {
 
-    disp3478_bestOff = bestOff;
-    disp3478_bestScore = bestScore;
+                    /* extract ISA bits from this run */
+                    static uint8_t bits[256];
+                    uint16_t bitsLen = 0;
+                    for (uint16_t k = runStart; k < runEnd; k++) {
+                        uint8_t isa = (uint8_t)((s[k] >> 1) & 1u);
+                        if (bitsLen < sizeof(bits)) bits[bitsLen++] = isa;
+                    }
 
-    /* ------------------------------------------------------------
-       STEP 2: Build ISA opcode list using bestOff (for debug)
-       ------------------------------------------------------------ */
-    {
-        uint16_t base = bestOff;
+                    /* search all 8-bit windows for known opcodes */
+                    uint8_t bestLocalScore = 0u;
+                    uint8_t bestLocalMSB = 0u;
+                    uint16_t bestLocalPos = 0u;
+                    uint8_t bestLocalByte = 0u;
 
-        while ((base + 9u) < N) {
+                    for (uint16_t pos = 0; (pos + 7u) < bitsLen; pos++) {
+                        uint8_t b_lsb = assemble8_lsb(bits, pos);
+                        uint8_t b_msb = assemble8_msb(bits, pos);
 
-            uint8_t b = 0u;
-            for (uint8_t j = 0u; j < 8u; j++) {
-                uint8_t isaBit = (uint8_t)((s[base + 2u + j] >> 1) & 1u);
-                b |= (uint8_t)(isaBit << j);
-            }
+                        if (is_known_opcode(b_lsb)) {
+                            bestLocalScore = 2u;
+                            bestLocalMSB = 0u;
+                            bestLocalPos = pos;
+                            bestLocalByte = b_lsb;
+                            break; /* good enough */
+                        }
+                        if (is_known_opcode(b_msb) && (bestLocalScore == 0u)) {
+                            bestLocalScore = 1u;
+                            bestLocalMSB = 1u;
+                            bestLocalPos = pos;
+                            bestLocalByte = b_msb;
+                        }
+                    }
 
-            if (disp3478_isa_list_len < sizeof(disp3478_isa_list)) {
-                disp3478_isa_list[disp3478_isa_list_len++] = b;
-            }
+                    disp3478_bestScore = bestLocalScore;
+                    disp3478_bestMSB = bestLocalMSB;
 
-            base = (uint16_t)(base + 10u);
-        }
+                    if (bestLocalScore) {
 
-        for (uint8_t i = disp3478_isa_list_len; i < sizeof(disp3478_isa_list); i++) {
-            disp3478_isa_list[i] = 0u;
-        }
-    }
+                        /* record opcode */
+                        if (disp3478_isa_list_len < sizeof(disp3478_isa_list)) {
+                            disp3478_isa_list[disp3478_isa_list_len++] = bestLocalByte;
+                        }
+                        disp3478_opcode_hits++;
 
-    /* If we found *no* opcodes at all, this capture probably isn’t aligned/real */
-    /* Still consume frameReady so you can re-arm and try again */
-    if (bestScore == 0u) {
-        frameReady = 0u;
-        return;
-    }
-
-    /* ------------------------------------------------------------
-       STEP 3: Parse stream by 10-bit words:
-               - Watch ISA byte each word
-               - When ISA==0x1A : read next 12 INA nibbles (bits 2..5)
-               - When ISA==0x0A : read next 12 INA nibbles (bits 2..5)
-       ------------------------------------------------------------ */
-    uint8_t want_hi = 0u, want_lo = 0u;
-    uint8_t hi_idx = 0u, lo_idx = 0u;
-
-    uint16_t base = bestOff;
-
-    while ((base + 9u) < N) {
-
-        /* ISA byte from this word */
-        uint8_t op = 0u;
-        for (uint8_t j = 0u; j < 8u; j++) {
-            uint8_t isaBit = (uint8_t)((s[base + 2u + j] >> 1) & 1u);
-            op |= (uint8_t)(isaBit << j);
-        }
-
-        if (op == 0x1Au) {
-            want_hi = 1u;
-            want_lo = 0u;
-            hi_idx = 0u;
-
-            /* next 12 words contain 12 nibbles on INA */
-            for (uint8_t n = 0u; n < 12u; n++) {
-                base = (uint16_t)(base + 10u);
-                if ((base + 9u) >= N) break;
-
-                uint8_t nib = 0u;
-                /* nibble assumed at INA bits base+2..base+5 (LSB-first) */
-                for (uint8_t k = 0u; k < 4u; k++) {
-                    uint8_t inaBit = (uint8_t)(s[base + 2u + k] & 1u);
-                    nib |= (uint8_t)(inaBit << k);
+                        if (bestLocalByte == 0x1Au) { pending_hi = 1u; pending_lo = 0u; disp3478_saw_1A = 1u; }
+                        if (bestLocalByte == 0x0Au) { pending_lo = 1u; pending_hi = 0u; disp3478_saw_0A = 1u; }
+                    }
                 }
-                if (hi_idx < 12u) disp3478_hi[hi_idx++] = nib;
-            }
-        }
-        else if (op == 0x0Au) {
-            want_lo = 1u;
-            want_hi = 0u;
-            lo_idx = 0u;
 
-            for (uint8_t n = 0u; n < 12u; n++) {
-                base = (uint16_t)(base + 10u);
-                if ((base + 9u) >= N) break;
+                /* ---------------- SYNC LOW: if pending 0x1A/0x0A, decode 12 nibbles ---------------- */
+                else {
 
-                uint8_t nib = 0u;
-                for (uint8_t k = 0u; k < 4u; k++) {
-                    uint8_t inaBit = (uint8_t)(s[base + 2u + k] & 1u);
-                    nib |= (uint8_t)(inaBit << k);
+                    if (pending_hi || pending_lo) {
+
+                        /* extract INA bits from this run */
+                        static uint8_t bits[512];
+                        uint16_t bitsLen = 0;
+                        for (uint16_t k = runStart; k < runEnd; k++) {
+                            uint8_t ina = (uint8_t)(s[k] & 1u);
+                            if (bitsLen < sizeof(bits)) bits[bitsLen++] = ina;
+                        }
+
+                        /* Find best 48-bit window (12 nibbles) */
+                        uint16_t bestPos = 0;
+                        uint8_t bestScore = 0;
+
+                        if (bitsLen >= 48u) {
+                            for (uint16_t pos = 0; (pos + 47u) < bitsLen; pos++) {
+
+                                uint8_t score = 0u;
+                                for (uint8_t n = 0; n < 12u; n++) {
+                                    uint16_t base = (uint16_t)(pos + (uint16_t)n * 4u);
+                                    uint8_t nib = assemble4_lsb(bits, base);
+                                    if (nib != 0u) score++;
+                                }
+
+                                if (score > bestScore) {
+                                    bestScore = score;
+                                    bestPos = pos;
+                                    if (score >= 8u) break; /* early stop */
+                                }
+                            }
+
+                            /* commit 12 nibbles */
+                            for (uint8_t n = 0; n < 12u; n++) {
+                                uint16_t base = (uint16_t)(bestPos + (uint16_t)n * 4u);
+                                if ((base + 3u) >= bitsLen) break;
+
+                                uint8_t nib = assemble4_lsb(bits, base);
+
+                                if (pending_hi) disp3478_hi[n] = nib;
+                                if (pending_lo) disp3478_lo[n] = nib;
+                            }
+                        }
+
+                        pending_hi = 0u;
+                        pending_lo = 0u;
+                    }
                 }
-                if (lo_idx < 12u) disp3478_lo[lo_idx++] = nib;
             }
-        }
 
-        base = (uint16_t)(base + 10u);
+            /* next run */
+            runStart = i;
+            runSync = (i < N) ? (uint8_t)((s[i] >> 2) & 1u) : runSync;
+        }
     }
 
-    /* Combine if we got both halves */
-    if ((hi_idx == 12u) && (lo_idx == 12u)) {
-        for (uint8_t k = 0u; k < 12u; k++) {
+    /* zero remainder of isa_list */
+    for (uint8_t i = disp3478_isa_list_len; i < sizeof(disp3478_isa_list); i++) {
+        disp3478_isa_list[i] = 0u;
+    }
+
+    /* combine if both halves non-trivial (don’t insist all 12 nonzero yet) */
+    uint8_t hi_nonzero = 0u, lo_nonzero = 0u;
+    for (uint8_t i = 0; i < 12u; i++) {
+        if (disp3478_hi[i] != 0u) hi_nonzero = 1u;
+        if (disp3478_lo[i] != 0u) lo_nonzero = 1u;
+    }
+
+    if (hi_nonzero && lo_nonzero) {
+        for (uint8_t k = 0; k < 12u; k++) {
             disp3478_ram[k] = (uint8_t)((disp3478_hi[k] << 4) | (disp3478_lo[k] & 0x0Fu));
         }
         disp3478_valid = 1u;
     }
-
-    frameReady = 0u; /* consume capture */
 }
 
 
@@ -1299,7 +1346,7 @@ static uint8_t HP3457_GetPunct(uint8_t d)
 
 static char HP3457_CodeToAscii(uint8_t code)
 {
-    
+
     // Replace chars
     if (code == 0x3F) return '=';
     if (code == 0x1F) return '_';
