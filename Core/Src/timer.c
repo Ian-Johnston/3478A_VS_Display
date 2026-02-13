@@ -835,156 +835,123 @@ static uint8_t is_known_opcode(uint8_t b)
 
 void Decode3478_LatchedFrame(void)
 {
-    /* Only decode once per capture */
     if (frameReady == 0u) return;
 
-    dbg_decode_hits++;
+    frameReady = 0u;
 
-    /* DO NOT clear frameReady at the top; clear at the end so you can see it */
     disp3478_valid = 0u;
-
     disp3478_isa_list_len = 0u;
-    for (uint8_t i = 0; i < 12u; i++) {
-        disp3478_hi[i] = 0u;
-        disp3478_lo[i] = 0u;
-        disp3478_ram[i] = 0u;
-    }
-
-    disp3478_opcode_hits = 0u;
     disp3478_saw_1A = 0u;
     disp3478_saw_0A = 0u;
 
-    const uint8_t* s = frameO2Latched; /* packed: (sync<<2)|(isa<<1)|ina */
+    const uint8_t* s = frameO2Latched;
     uint16_t N = frameO2LatchedLen;
     if (N > 512u) N = 512u;
 
-    /* ---------------- Build ISA bitstream = all ISA bits during SYNC==1 ---------------- */
-    static uint8_t isaBits[512];
-    uint16_t isaBitsLen = 0u;
+    uint8_t prevSync = (uint8_t)((s[0] >> 2) & 1u);
 
-    for (uint16_t i = 0; i < N; i++) {
+    uint8_t collectingISA = 0u;
+    uint8_t collectingINA = 0u;
+
+    uint8_t isaShift = 0u;
+    uint8_t isaBitCount = 0u;
+    uint8_t isaBytes[8];
+    uint8_t isaLen = 0u;
+
+    uint8_t inaShift = 0u;
+    uint8_t inaBitCount = 0u;
+    uint8_t inaBytes[64];
+    uint8_t inaLen = 0u;
+
+    for (uint16_t i = 0; i < N; i++)
+    {
         uint8_t sync = (uint8_t)((s[i] >> 2) & 1u);
-        if (sync) {
-            uint8_t isa = (uint8_t)((s[i] >> 1) & 1u);
-            if (isaBitsLen < sizeof(isaBits)) {
-                isaBits[isaBitsLen++] = isa;
+
+        /* Detect SYNC rising */
+        if ((prevSync == 0u) && (sync == 1u))
+        {
+            collectingISA = 1u;
+            collectingINA = 0u;
+
+            isaShift = 0u;
+            isaBitCount = 0u;
+            isaLen = 0u;
+
+            continue;
+        }
+
+        /* Detect SYNC falling */
+        if ((prevSync == 1u) && (sync == 0u))
+        {
+            collectingISA = 0u;
+            collectingINA = 1u;
+
+            inaShift = 0u;
+            inaBitCount = 0u;
+            inaLen = 0u;
+
+            continue;
+        }
+
+        prevSync = sync;
+
+        /* ISA bits */
+        if (collectingISA)
+        {
+            uint8_t bit = (uint8_t)((s[i] >> 1) & 1u);
+
+            isaShift |= (uint8_t)(bit << isaBitCount);
+            isaBitCount++;
+
+            if (isaBitCount == 8u)
+            {
+                if (isaLen < sizeof(isaBytes))
+                    isaBytes[isaLen++] = isaShift;
+
+                isaShift = 0u;
+                isaBitCount = 0u;
+            }
+        }
+
+        /* INA bits */
+        else if (collectingINA)
+        {
+            uint8_t bit = (uint8_t)(s[i] & 1u);
+
+            inaShift |= (uint8_t)(bit << inaBitCount);
+            inaBitCount++;
+
+            if (inaBitCount == 8u)
+            {
+                if (inaLen < sizeof(inaBytes))
+                    inaBytes[inaLen++] = inaShift;
+
+                inaShift = 0u;
+                inaBitCount = 0u;
             }
         }
     }
 
-    /* ---------------- Find best decode hypothesis ----------------
-       We try:
-         - bit order: LSB-first or MSB-first
-         - per-byte framing: pre dummy clocks, 8 data clocks, post dummy clocks
-         - resulting step = pre + 8 + post
-       From ROM: pre=2, post=2, step=12 is a *very* likely winner.
-    */
-    uint8_t bestOff = 0u;
-    uint8_t bestMSB = 0u;
-    uint8_t bestScore = 0u;
-    uint8_t bestPre = 0u, bestPost = 0u, bestStep = 0u;
+    /* Store ISA bytes for inspection */
+    for (uint8_t i = 0; i < isaLen && i < sizeof(disp3478_isa_list); i++)
+        disp3478_isa_list[i] = isaBytes[i];
 
-    for (uint8_t pre = 0u; pre <= 4u; pre++) {
-        for (uint8_t post = 0u; post <= 4u; post++) {
+    disp3478_isa_list_len = isaLen;
 
-            uint8_t step = (uint8_t)(pre + 8u + post);
-            if (step < 8u) continue;
-
-            /* try offsets within one step */
-            for (uint8_t off = 0u; off < step; off++) {
-
-                for (uint8_t msb = 0u; msb < 2u; msb++) {
-
-                    uint8_t score = 0u;
-
-                    /* decode a bunch of bytes */
-                    uint16_t k = off;
-
-                    while ((k + pre + 7u) < isaBitsLen) {
-
-                        uint16_t base = (uint16_t)(k + pre);
-                        uint8_t b = 0u;
-
-                        if (msb == 0u) {
-                            /* LSB-first */
-                            for (uint8_t j = 0u; j < 8u; j++) {
-                                b |= (uint8_t)(isaBits[base + j] << j);
-                            }
-                        }
-                        else {
-                            /* MSB-first */
-                            for (uint8_t j = 0u; j < 8u; j++) {
-                                b = (uint8_t)((b << 1) | (isaBits[base + j] & 1u));
-                            }
-                        }
-
-                        if (is_known_opcode(b)) score++;
-
-                        k = (uint16_t)(k + step);
-                        if (score >= 12u) break; /* early exit */
-                    }
-
-                    if (score > bestScore) {
-                        bestScore = score;
-                        bestOff = off;
-                        bestMSB = msb;
-                        bestPre = pre;
-                        bestPost = post;
-                        bestStep = step;
-                    }
-                }
-            }
-        }
+    /* Detect key opcodes from ROM */
+    for (uint8_t i = 0; i < isaLen; i++)
+    {
+        if (isaBytes[i] == 0x1A) disp3478_saw_1A = 1u;
+        if (isaBytes[i] == 0x0A) disp3478_saw_0A = 1u;
+        if (isaBytes[i] == 0xFC) disp3478_opcode_hits++;
     }
 
-    disp3478_bestOff = bestOff;
-    disp3478_bestMSB = bestMSB;
-    disp3478_bestScore = bestScore;
-    disp3478_bestPre = bestPre;
-    disp3478_bestPost = bestPost;
-    disp3478_bestStep = bestStep;
+    /* For now just expose INA payload raw */
+    for (uint8_t i = 0; i < inaLen && i < sizeof(disp3478_ram); i++)
+        disp3478_ram[i] = inaBytes[i];
 
-    /* ---------------- Build ISA opcode list using best hypothesis ---------------- */
-    if (isaBitsLen != 0u) {
-
-        uint16_t k = bestOff;
-
-        while ((k + bestPre + 7u) < isaBitsLen) {
-
-            uint16_t base = (uint16_t)(k + bestPre);
-            uint8_t b = 0u;
-
-            if (bestMSB == 0u) {
-                for (uint8_t j = 0u; j < 8u; j++) b |= (uint8_t)(isaBits[base + j] << j);
-            }
-            else {
-                for (uint8_t j = 0u; j < 8u; j++) b = (uint8_t)((b << 1) | (isaBits[base + j] & 1u));
-            }
-
-            if (disp3478_isa_list_len < sizeof(disp3478_isa_list)) {
-                disp3478_isa_list[disp3478_isa_list_len++] = b;
-            }
-
-            if (is_known_opcode(b)) disp3478_opcode_hits++;
-            if (b == 0x1Au) disp3478_saw_1A = 1u;
-            if (b == 0x0Au) disp3478_saw_0A = 1u;
-
-            k = (uint16_t)(k + bestStep);
-        }
-
-        for (uint8_t i = disp3478_isa_list_len; i < sizeof(disp3478_isa_list); i++) {
-            disp3478_isa_list[i] = 0u;
-        }
-    }
-
-    /* NOTE (important):
-       We are NOT yet decoding INA nibbles here because we first need ISA opcodes
-       to decode correctly and consistently. Once you see 0x1A and 0x0A appear
-       in disp3478_isa_list[] on kind=2 frames, we’ll add the INA nibble pull
-       immediately after those opcodes (very likely 12 nibbles each).
-    */
-
-    frameReady = 0u; /* consume capture */
+    if (inaLen > 0u)
+        disp3478_valid = 1u;
 }
 
 
