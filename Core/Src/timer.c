@@ -231,6 +231,26 @@ volatile uint8_t disp3478_inaBestStripNib[8];   // which nibble (besides 0/F) we
 volatile uint8_t disp3478_inaStripScore[8];     // how good the strip choice was
 volatile uint8_t disp3478_inaStripped[8][32];   // already have, keep 32 for now
 
+/* Store last STATIC decoded stripped lists */
+volatile uint8_t disp3478_staticStripCount[8];
+volatile uint8_t disp3478_staticStripped[8][32];
+
+/* Store last CHANGE decoded stripped lists */
+volatile uint8_t disp3478_changeStripCount[8];
+volatile uint8_t disp3478_changeStripped[8][32];
+
+/* Simple diff results for seg2 and seg4 */
+volatile uint8_t disp3478_diffSeg2_first;
+volatile uint8_t disp3478_diffSeg2_count;
+volatile uint8_t disp3478_diffSeg2_xor[32];
+
+volatile uint8_t disp3478_diffSeg4_first;
+volatile uint8_t disp3478_diffSeg4_count;
+volatile uint8_t disp3478_diffSeg4_xor[32];
+
+volatile uint8_t  frameLatchModeStatic = 0;   // 1 = latch next PWO even if only 1 SYNC
+volatile uint16_t frameLatchTimeout = 0;      // counts O2 samples since arming
+
 
 
 
@@ -660,6 +680,15 @@ void Decode3478_LatchedFrame(void)
         disp3478_inaStripScore[i] = 0;
     }
 
+    /* diff outputs */
+    disp3478_diffSeg2_first = 0xFFu;
+    disp3478_diffSeg2_count = 0u;
+    for (uint8_t i = 0u; i < 32u; i++) disp3478_diffSeg2_xor[i] = 0u;
+
+    disp3478_diffSeg4_first = 0xFFu;
+    disp3478_diffSeg4_count = 0u;
+    for (uint8_t i = 0u; i < 32u; i++) disp3478_diffSeg4_xor[i] = 0u;
+
     disp3478_sync1_count = 0;
     for (uint8_t i = 0u; i < 64u; i++) disp3478_tagPreview[i] = 0;
 
@@ -729,6 +758,81 @@ void Decode3478_LatchedFrame(void)
     {
         Process3478Run(s, runStart, N, curSync, seg);
         seg++;
+    }
+
+    /* ---------------- Save STATIC or CHANGE copies ---------------- */
+    if (frameKindLatched == 2u)
+    {
+        /* digit change */
+        for (uint8_t sg = 0u; sg < 8u; sg++)
+        {
+            disp3478_changeStripCount[sg] = disp3478_inaStripCount[sg];
+            for (uint8_t k = 0u; k < 32u; k++)
+                disp3478_changeStripped[sg][k] = disp3478_inaStripped[sg][k];
+        }
+    }
+    else
+    {
+        /* static */
+        for (uint8_t sg = 0u; sg < 8u; sg++)
+        {
+            disp3478_staticStripCount[sg] = disp3478_inaStripCount[sg];
+            for (uint8_t k = 0u; k < 32u; k++)
+                disp3478_staticStripped[sg][k] = disp3478_inaStripped[sg][k];
+        }
+    }
+
+    /* ---------------- Compute XOR diffs (seg2 and seg4) ---------------- */
+    {
+        uint8_t sg = 2u;
+        uint8_t n = disp3478_staticStripCount[sg];
+        if (disp3478_changeStripCount[sg] < n) n = disp3478_changeStripCount[sg];
+
+        if (n > 0u)
+        {
+            uint8_t first = 0xFFu;
+            uint8_t count = 0u;
+
+            for (uint8_t i = 0u; i < n; i++)
+            {
+                uint8_t x = (uint8_t)(disp3478_staticStripped[sg][i] ^ disp3478_changeStripped[sg][i]);
+                disp3478_diffSeg2_xor[i] = x;
+                if (x != 0u)
+                {
+                    if (first == 0xFFu) first = i;
+                    count++;
+                }
+            }
+
+            disp3478_diffSeg2_first = first;
+            disp3478_diffSeg2_count = count;
+        }
+    }
+
+    {
+        uint8_t sg = 4u;
+        uint8_t n = disp3478_staticStripCount[sg];
+        if (disp3478_changeStripCount[sg] < n) n = disp3478_changeStripCount[sg];
+
+        if (n > 0u)
+        {
+            uint8_t first = 0xFFu;
+            uint8_t count = 0u;
+
+            for (uint8_t i = 0u; i < n; i++)
+            {
+                uint8_t x = (uint8_t)(disp3478_staticStripped[sg][i] ^ disp3478_changeStripped[sg][i]);
+                disp3478_diffSeg4_xor[i] = x;
+                if (x != 0u)
+                {
+                    if (first == 0xFFu) first = i;
+                    count++;
+                }
+            }
+
+            disp3478_diffSeg4_first = first;
+            disp3478_diffSeg4_count = count;
+        }
     }
 
     /* hard clear unused entries */
