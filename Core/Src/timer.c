@@ -64,551 +64,74 @@ void SetTimerDuration(uint16_t ms) {
 //***********************************************************************************
 // Timer 3 - 3457A Input Capture Functionality
 
-/* Buffers for Data Capture */
 #define MAX_BUFFER_SIZE 256
 
-volatile uint8_t isaBuffer[MAX_BUFFER_SIZE];
-volatile uint8_t inaBuffer[MAX_BUFFER_SIZE];
-static uint16_t isaIndex = 0;
-static uint16_t inaIndex = 0;
-#define LOG_TRIGGER_COUNT 256 // Log after 256 samples
-
-/* Private Function Prototypes */
-volatile uint8_t bufferFull = 0; // Indicates if the buffer is full
 volatile uint8_t syncState = 0;
 volatile uint32_t O2Count;
-volatile uint32_t ISAcount = 0;
-volatile uint32_t INAcount = 0;
-volatile uint8_t  lastBit = 0;
 volatile uint8_t  lastSync = 0;
-volatile uint32_t lastBitOnes = 0;
 volatile uint32_t syncHighCount = 0;
 volatile uint32_t syncLowCount = 0;
 
-// *********************************************
-
-// ---- Decode state (Live Watch friendly) ----
 volatile uint16_t lastCmd = 0;
 volatile uint8_t  lastDataByte = 0;
-volatile uint8_t  payloadBytesExpected = 0;
-volatile uint8_t  payloadBytesGot = 0;
-//volatile uint8_t  frameReady = 0;
 
 volatile uint8_t  regA[6], regB[6], regC[6];
 volatile uint8_t  ann[2];
 
-// Internal decode state
-//static uint8_t  prevSync = 0;
-
-static uint8_t currentTarget = 0;  // 1=A,2=B,3=C,4=ANN,5=X(2E0)
-
-// Decoded output for Live Watch / display
 volatile uint8_t digitCode[12];   // 7-bit HP char code per digit (1..12 -> index 0..11)
 volatile uint8_t punctCode[12];   // 0..3 (none, '.', ':', ',')
 
-static void DecodeAllDigits(void);
-
-volatile uint8_t lastExpected = 0;
-volatile uint32_t cmd028Count = 0;
-volatile uint32_t cmd068Count = 0;
-volatile uint32_t cmd0A8Count = 0;
-volatile uint32_t cmd2F0Count = 0;
-volatile uint16_t lastCmd2 = 0;
 volatile uint16_t cmdSeen[8] = { 0 };
 volatile uint32_t cmdSeenCount[8] = { 0 };
-static void TrackCmd(uint16_t cmd);
 volatile uint8_t digitVal[12];   // 0–9, or 0xF for blank
-static void DecodeDigitsFromRegA(void);
 volatile int8_t digitDec[12];
-volatile uint8_t  regX[6];          // payload after 0x2E0 (candidate “Reg B”)
-volatile uint32_t cmd2E0Count = 0;  // Live Watch
-volatile uint32_t cmdIgnoredCount = 0;
+
 volatile uint8_t numStart = 0;
 volatile uint8_t numLen = 0;
 volatile uint8_t numDigits[12];
 static void ExtractBestRun(void);
 volatile uint8_t regANib[12];      // 12 nibbles extracted from regA
 volatile uint8_t regANibPrev[12];
+
 volatile uint8_t regANibChanged[12]; // 1 if that nibble changed this frame
-static void ExtractRegANibbles(void);
-volatile uint8_t lsdNibIdx = 4;       // you’ve found this
 volatile uint16_t changedMask;
-volatile uint8_t digitNibIdx[6] = { 4, 5, 6, 7, 8, 9 };  // LSD..MSD
-static uint8_t tenCount = 0;       // 0..9 within current 10-bit chunk
-static uint8_t byteShift = 0;      // assembled 8-bit value, LSB-first
-static uint8_t byteBitCount = 0;   // 0..7
-volatile uint32_t isaBranchHits = 0;
-volatile uint8_t lastCmdRawLSB = 0;  // debug only (same as lastCmdRaw now)
-volatile uint8_t lastCmdRawMSB = 0;  // retained for Live Watch compatibility
-volatile uint8_t lastCmdRaw = 0;
-static uint16_t isa10 = 0;
-static uint8_t  isaBitCount = 0;
-//static uint8_t  inaGap2 = 0;      // counts down 2->0 after SYNC falls
-volatile uint16_t lastCmd10 = 0;
-volatile uint32_t cmdOtherCount = 0;
-volatile uint32_t cmd068NearCount = 0;   // counts commands in 0x060..0x06F
-volatile uint32_t cmd0A8NearCount = 0;   // counts commands in 0x0A0..0x0AF
-volatile uint16_t cmdRing[16];
-volatile uint8_t  cmdRingIdx = 0;
-volatile uint32_t regCWrites = 0;
-volatile uint8_t  lastRegC[6];
-volatile uint16_t lastCmdAtRegC = 0;
-volatile uint32_t regCNonZeroWrites = 0;
-volatile uint8_t dbgCode[12];
-static uint8_t HP3457_GetCharCode(uint8_t d);
-static uint8_t HP3457_GetPunct(uint8_t d);
-volatile uint8_t dbgCode_alt[12];
-static uint8_t HP3457_GetCharCode_Alt(uint8_t d);
-volatile char displayStr[13];       // 12 chars + \0
-volatile char punctStr[13];         // punctuation per digit + \0
 volatile char displayWithPunct[32]; // debug/combined string + \0
-volatile uint8_t Annunc[13];   // use indices 1..12, ignore 0
-volatile uint8_t dbg_char8 = 0;
-volatile uint8_t dbg_char8_mapped = 0;
-volatile uint8_t dbg_after_build = 0;
 
-// 3478A testing
-volatile uint32_t isaCmdCompleteCount = 0;
-volatile uint32_t isaCmdLowNibbleZeroCount = 0;
-volatile uint32_t isaCmdLowNibbleNonZeroCount = 0;
-//volatile uint16_t lastCmd10 = 0;
-//volatile uint8_t isaGap2 = 0;
-//volatile uint8_t inaGap2 = 0;
-static uint8_t skipThisClock = 0;
-volatile uint32_t cmd_000_1FF = 0;
-volatile uint32_t cmd_200_2FF = 0;
-volatile uint32_t cmd_300_3FF = 0;
-volatile uint16_t lastCmd10_hex = 0;
-volatile uint32_t cmd260Count = 0;
-//volatile uint8_t  inaBytesSinceLastCmd = 0;
-volatile uint16_t lastCmdPrev = 0;
-volatile uint8_t  lastInaLenPrev = 0;
-
-volatile uint16_t cmdSeq[16];
-volatile uint8_t  lenSeq[16];
-volatile uint8_t  seqIdx = 0;
-
-volatile uint8_t  inaBytesSinceLastCmd = 0;
-
-//volatile uint8_t  lastPayload[64];
-//volatile uint8_t  lastPayloadLen = 0;
-
-//static uint8_t payloadBuf[64];
-//static uint8_t payloadBufLen = 0;
-static uint16_t currentCmd10 = 0;
-
-volatile uint8_t  lastLen260 = 0, lastLen380 = 0;
-volatile uint32_t cnt260 = 0, cnt380 = 0;
-
-volatile uint8_t  pay260[64], len260 = 0;
-volatile uint8_t  pay380[64], len380 = 0;
-
-volatile uint8_t pay260_prev[64];
-volatile uint8_t len260_prev = 0;
-
-volatile uint8_t pay260_diffMask[64];   // 1 if changed
-volatile uint8_t diffCount = 0;
-
-volatile uint8_t pay260_prev20[64], pay260_prev31[64];
-volatile uint8_t havePrev20 = 0, havePrev31 = 0;
-
-volatile uint8_t diffCount20 = 0, diffCount31 = 0;
-volatile uint8_t diffMask20[64], diffMask31[64];
-
-volatile uint32_t chg31[64];
-volatile uint32_t frames31;
-
-volatile uint8_t stableDump[16];
-
-volatile uint8_t dbg_len260;
-volatile uint8_t dbg_p260_0, dbg_p260_9, dbg_p260_10, dbg_p260_30;
-
-volatile uint32_t dbg_inISA = 0;
-volatile uint32_t dbg_inINA = 0;
-
-volatile uint8_t  dbg_byteBitCount = 0;
-volatile uint8_t  dbg_lastDataByte2 = 0;
-volatile uint32_t dbg_bytesMade = 0;
-volatile uint16_t dbg_payloadBufLen = 0;
-
-volatile uint16_t dbg_lastCmdPrev = 0;
-
-volatile uint32_t hit260 = 0;
-volatile uint32_t hit380 = 0;
-volatile uint16_t dbg_cmdPrev_atTest = 0;
-volatile uint16_t dbg_lenPrev_atTest = 0;
-
-volatile uint32_t chg380[64];
-//volatile uint8_t  pay380_prev[64];
-volatile uint8_t  havePrev380 = 0;
-volatile uint8_t  diffCount380 = 0;
-
-volatile uint32_t chg260_31[64];
-volatile uint32_t chg260_20[64];
-
-//volatile uint8_t  pay260_prev31[64];
-//volatile uint8_t  pay260_prev20[64];
-
-//volatile uint8_t  havePrev31 = 0;
-//volatile uint8_t  havePrev20 = 0;
-
-volatile uint8_t  diffCount260_31 = 0;
-volatile uint8_t  diffCount260_20 = 0;
-
-volatile uint8_t dbg260_b0 = 0;
-volatile uint8_t dbg260_b1 = 0;
-volatile uint8_t dbg260_b2 = 0;
-volatile uint8_t dbg260_b3 = 0;
-volatile uint8_t dbg260_b4 = 0;
-volatile uint8_t dbg260_b5 = 0;
-volatile uint8_t dbg260_b6 = 0;
-volatile uint8_t dbg260_b7 = 0;
-volatile uint8_t dbg260_b8 = 0;
-volatile uint8_t dbg260_b9 = 0;
-volatile uint8_t dbg260_b10 = 0;
-volatile uint8_t dbg260_b11 = 0;
-volatile uint8_t dbg260_b12 = 0;
-volatile uint8_t dbg260_b13 = 0;
-volatile uint8_t dbg260_b14 = 0;
-volatile uint8_t dbg260_b15 = 0;
-volatile uint8_t dbg260_b16 = 0;
-volatile uint8_t dbg260_b17 = 0;
-volatile uint8_t dbg260_b18 = 0;
-volatile uint8_t dbg260_b19 = 0;
-volatile uint8_t dbg260_b20 = 0;
-volatile uint8_t dbg260_b21 = 0;
-volatile uint8_t dbg260_b22 = 0;
-
-volatile uint8_t xor260_31[31];
-volatile uint8_t dbg_xor260_b0, dbg_xor260_b1, dbg_xor260_b2;
-
-volatile uint8_t xor380[31], pay380_prev[31];
-//volatile uint8_t havePrev380;
-volatile uint8_t dbg_xor380_b0, dbg_xor380_b1;
-
-/* 0x260 extra (len 20) */
-static uint8_t  xor260_20[20];
-static uint8_t  dbg_xor260_20_b0, dbg_xor260_20_b1;
-
-/* 0x380 prev-length tracking */
-static uint8_t  len380_prev;
-
-static uint8_t cand260[64];
-static uint8_t candLen260 = 0;
-static uint8_t candValid260 = 0;
-static uint8_t candRepeats260 = 0;
-
-//static uint8_t stable260[64];
 static uint8_t stableLen260 = 0;
 static uint32_t stable260Hits = 0;
 
-// Debug taps
-static uint8_t dbg_stableAccept = 0;
-static uint8_t dbg_candRepeats = 0;
-static uint8_t dbg_diffFirstIdx = 0xFF;
-
-// --- NEW: 0x260 stability latch ---
-static uint8_t  last260_raw[64];
-static uint8_t  last260_raw_len = 0;
-
 static uint8_t  stable260[64];
-//static uint8_t  stable260_len = 0;
-
-static uint32_t stable260_acceptCount = 0;
-static uint32_t stable260_rejectCount = 0;
-
-// --- 3478A: stability filter for 0x260 payload ---
-uint8_t  stable260_sameCount = 0;
-uint8_t  stable260_candLen = 0;
-uint8_t  stable260_cand[64];
-
-//uint8_t  stable260_len = 0;
-uint8_t  stable260_pay[64];
-//uint32_t stable260_acceptCount = 0;
-//uint32_t stable260_rejectCount = 0;
-
-static uint8_t havePrev260_20 = 0;
-static uint8_t prev260_20[20];
-
-static uint8_t havePrev260_31 = 0;
-static uint8_t prev260_31[31];
-
-volatile uint8_t  pay260_raw[64];
-volatile uint8_t  len260_raw = 0;
-
-volatile uint8_t payloadIdx = 0;
-volatile uint8_t payload[64];
-
-volatile uint8_t pay260_diff[64];
-volatile uint8_t len260_diff = 0;
-
-volatile uint8_t pay260_diff_latched[64];
-volatile uint8_t len260_diff_latched = 0;
-volatile uint8_t pay260_diff_latched_valid = 0;
-
-volatile uint8_t pay260_prev_valid = 0;
-
-volatile uint8_t pay260_latch_armed = 0;
-
-volatile uint8_t pay260_latch_enable = 0;
-
-volatile uint8_t last260_ff_count = 0;
-volatile uint8_t last260_00_count = 0;
-
-volatile uint8_t prevSyncLevel = 0;
-
-volatile uint8_t ina_ff_run = 0;
-
-volatile uint8_t pay260_raw_latched[64];
-volatile uint8_t len260_raw_latched = 0;
-
-volatile uint8_t pay260_latch_timeout = 0;
-
-volatile uint8_t pay260_raw_latched2[64];
-volatile uint8_t len260_raw_latched2 = 0;
-
-volatile uint8_t pay260_latch_hits = 0;   /* how many update packets captured this arm (0,1,2) */
-
-volatile uint8_t pay260_raw_next[64];
-volatile uint8_t len260_raw_next = 0;
-volatile uint8_t pay260_wait_next = 0;
-
-volatile uint8_t pay260_seq[6][32];
-volatile uint8_t pay260_seq_len[6];
-volatile uint8_t pay260_seq_count = 0;
-volatile uint8_t pay260_seq_active = 0;
-
-volatile uint8_t pay260_upd[4][32];
-volatile uint8_t pay260_upd_len[4];
-volatile uint8_t pay260_upd_count = 0;
-volatile uint8_t pay260_upd_active = 0;
-
-volatile uint16_t pay260_upd_timeout = 0;
-
-uint32_t pay260_frames_per_sec = 0;
-uint32_t pay260_upd_per_sec = 0;
-uint32_t pay260_frames_in_window = 0;
-uint32_t pay260_upd_in_window = 0;
-uint32_t pay260_rate_last_tick = 0;
-
-/* ---- 0x260 frame-rate meters (units: frames/sec) ---- */
-volatile uint32_t fps260 = 0;                 /* measured 0x260 frames/sec */
-volatile uint32_t fps260_win_count = 0;
-volatile uint32_t fps260_last_ms = 0;
-
-volatile uint32_t fps260_upd = 0;             /* measured update/write pkts/sec (30,24,7) */
-volatile uint32_t fps260_upd_win_count = 0;
-volatile uint32_t fps260_upd_last_ms = 0;
-
-/* Optional: total counters (handy sanity checks) */
-volatile uint32_t cnt260_total = 0;
-volatile uint32_t cnt260_upd_total = 0;
-
-#define MS_PER_SEC 1000u
-
-uint32_t pay260_upd_deadline_ms = 0;     /* absolute tick when update-capture stops */
-uint32_t pay260_upd_window_ms = 2500;  /* capture window length in ms (tweakable) */
-
-//volatile uint8_t inaGap2 = 0; // counts down 2 dummy clocks after SYNC falling edge
-
-uint8_t isaTenCount;
-
-uint8_t isaByteShift;
-
-uint8_t isaByteBitCount;
-
-uint8_t isaCmdBytes[4];
-
-uint8_t isaCmdByteCount;
-
-//uint8_t currentCmdBytes[8];
-
-//uint8_t currentCmdLen;
-
-//uint8_t currentCmdId;
-
-//uint8_t lastCmdBytes[8];
-
-//uint8_t lastCmdLen;
-
-//uint8_t lastCmdId;
-
-uint8_t payloadBuf[128];
-
-uint16_t payloadBufLen;
-
-//uint8_t lastPayload[128];
-
-//uint16_t lastPayloadLen;
-//static uint8_t  prevSync = 0;
-
-//static uint8_t  isaGap2 = 0;
-//static uint8_t  inaGap2 = 0;
-
-//static uint8_t  isaShift = 0;
-//static uint8_t  isaBitCount8 = 0;
-//static uint8_t  isaBytes[8];
-//static uint8_t  isaLen = 0;
-
-//static uint8_t  inaShift = 0;
-//static uint8_t  inaBitCount8 = 0;
-
-/* 3478A ISA command capture (8-bit, LSB first) */
-static uint8_t  isaCmdByte = 0;
-static uint8_t  isaCmdBitCount = 0;
-static uint8_t  isaCmdCaptured = 0;   /* 1 once we’ve latched the command for this SYNC-high */
-static uint8_t  isaSyncHighClkCount = 0; /* debug: clocks seen while SYNC high */
-
-/* ================= 3478A ISA/INA GLOBALS ================= */
 
 volatile uint8_t  prevSync = 0;
 
-volatile uint8_t  isaGap2 = 0;
-volatile uint8_t  inaGap2 = 0;
-
-volatile uint8_t  isaShift = 0;
-volatile uint8_t  isaBitCount8 = 0;
-volatile uint8_t  isaBytes[8];
-volatile uint8_t  isaLen = 0;
-
-volatile uint8_t  inaShift = 0;
-volatile uint8_t  inaBitCount8 = 0;
-
-volatile uint8_t  currentCmdBytes[8];
-volatile uint8_t  currentCmdLen = 0;
-volatile uint8_t  currentCmdId = 0;
-
-volatile uint8_t  lastCmdBytes[8];
-volatile uint8_t  lastCmdLen = 0;
-volatile uint8_t  lastCmdId = 0;
-
-volatile uint16_t lastPayloadLen = 0;
-volatile uint8_t  lastPayload[128];   /* make big enough */
-
-//uint8_t prevPwo = 0;
-//uint8_t pwoNow = 0;
-
-//volatile uint32_t dbg_sync_rise = 0;
-//volatile uint32_t dbg_sync_fall = 0;
 volatile uint32_t dbg_isa_bits = 0;
 volatile uint32_t dbg_isa_bytes = 0;
 volatile uint32_t dbg_ina_bytes = 0;
 
-//uint8_t prevPwo = 0;
-
-//volatile uint8_t  prevSync = 0;
-
-//volatile uint8_t  isaShift = 0;
-//volatile uint8_t  isaBitCount8 = 0;
-volatile uint8_t  isaBytes[8];
-//volatile uint8_t  isaLen = 0;
-
-//volatile uint8_t  inaShift = 0;
-//volatile uint8_t  inaBitCount8 = 0;
-
-
-/* NEW globals for raw capture + alignment */
-uint8_t  pwoPrev = 0;
-//uint32_t dbg_pwo_rise = 0;
-//uint32_t dbg_pwo_fall = 0;
-
-//uint16_t isaRawLen = 0;
-//uint8_t  isaRawBits[128];   /* enough for ISA bursts */
-
-//uint16_t inaRawLen = 0;
-//uint8_t  inaRawBits[512];   /* enough for INA bursts */
-
-uint8_t  isaBitAlign = 0xFF; /* 0..7 when known, 0xFF unknown */
-uint8_t  isaAlignLocked = 0; /* 0/1: once we find a good align in this PWO frame */
-
-volatile uint8_t  isaRawBits[64];
-volatile uint16_t isaRawLen = 0;
-
-volatile uint8_t  inaRawBits[512];
-volatile uint16_t inaRawLen = 0;
-
-volatile uint8_t  isaCmdCandidates[8];
-
 volatile uint32_t dbg_sync_rise = 0;
 volatile uint32_t dbg_sync_fall = 0;
 
-uint8_t inaBitAlign = 0;
-
-
-/* Raw per-PWO-frame capture (bits, LSB-first in time order as sampled) */
-volatile uint8_t  frameIsa[64];
-volatile uint16_t frameIsaLen = 0;      /* number of ISA bits captured this PWO frame */
-
-volatile uint8_t  frameInaN[512];
-volatile uint16_t frameInaLen = 0;      /* number of INA bits captured this PWO frame */
-
-/* Optional: a stable snapshot you can inspect after PWO falls */
-volatile uint8_t  frameIsaLatched[64];
-volatile uint16_t frameIsaLatchedLen = 0;
-
-volatile uint8_t  frameInaLatched[512];
-volatile uint16_t frameInaLatchedLen = 0;
-
-volatile uint8_t  frameReady = 0;       /* set to 1 on PWO falling edge */
-
 volatile uint8_t  prevPwo = 0;          /* for PWO edge detect */
 
-volatile uint32_t dbg_pwo_rise = 0;
-volatile uint32_t dbg_pwo_fall = 0;
-volatile uint32_t dbg_frame_isa_ovf = 0;
-volatile uint32_t dbg_frame_ina_ovf = 0;
-
-volatile uint8_t  frameLatchEnable = 0;   /* set to 1 in Live Watch to freeze NEXT complete PWO frame */
-volatile uint8_t  frameHold = 0;          /* internal: 1 = latched and holding, 0 = free-running */
-
-
-/* ===== Frame capture (PWO window) ===== */
 volatile uint8_t  frameIsa[64];
 volatile uint16_t frameIsaLen;
-
-volatile uint8_t  frameInaN[512];
 volatile uint16_t frameInaLen;
-
-/* ===== Latched frame ===== */
 volatile uint8_t  frameIsaLatched[64];
 volatile uint16_t frameIsaLatchedLen;
-
 volatile uint8_t  frameInaLatched[512];
 volatile uint16_t frameInaLatchedLen;
-
 volatile uint8_t  frameLatchEnable;   /* set this to 1 in Live Watch to latch next full frame */
 volatile uint8_t  frameHold;          /* goes 1 when latch happened */
 volatile uint8_t  frameReady;         /* pulses 1 when a frame is latched (then cleared next call) */
-
 volatile uint8_t  frameBaselineValid = 0;
 volatile uint16_t frameIsaBaseLen = 0;
 volatile uint16_t frameInaBaseLen = 0;
 volatile uint8_t  frameIsaBase[64];
 volatile uint8_t  frameInaBase[512];
-
 volatile uint8_t  frameIsa[64];      /* bits: 0/1 */
 volatile uint8_t  frameIna[512];     /* bits: 0/1 */
 volatile uint32_t dbg_frame_diff = 0;
 
-volatile uint8_t  inFrame = 0;
-volatile uint8_t  framePrevValid = 0;
-volatile uint16_t frameIsaPrevLen = 0;
-volatile uint16_t frameInaPrevLen = 0;
-volatile uint8_t  frameIsaPrev[64];
-volatile uint8_t  frameInaPrev[512];
-volatile uint32_t dbg_frame_latched = 0;
-volatile uint32_t dbg_frame_end = 0;
-volatile uint8_t  frameActive = 0;
-volatile uint8_t  inPwoWindow;
-volatile uint8_t  syncRiseCountInPwo;
-volatile uint8_t  dbg_sync_rise_in_pwo;
-volatile uint8_t  frameReady;
-volatile uint8_t  frameKind;
-
-volatile uint8_t  _pwoPrev;
-volatile uint8_t  _syncPrevInPwo;
-volatile uint8_t  _syncRiseCountInPwo;
-uint8_t  frameSyncRiseCount = 0;
 uint32_t dbg_ina_bits = 0;
 volatile uint8_t  syncRiseInPwo = 0;
 
@@ -618,77 +141,95 @@ volatile uint8_t frameLatchEnablePrev = 0;  /* internal: detect re-arm */
 volatile uint16_t frameO2Len = 0;          /* live timeline length (O2 clocks inside PWO) */
 volatile uint16_t frameO2LatchedLen = 0;   /* latched timeline length */
 
-//volatile uint8_t  frameKindLatched = 0;    /* 0 none, 1 single-sync frame, 2 dual-sync frame */
-
-/* ---- Decoded display RAM from last latched frame ---- */
 volatile uint8_t disp3478_ram[12];
 volatile uint8_t disp3478_hi[12];
 volatile uint8_t disp3478_lo[12];
 volatile uint8_t disp3478_valid;
-
-/* Optional debug: what ISA bytes were seen in the latched frame */
 volatile uint8_t disp3478_isa_list[16];
 volatile uint8_t disp3478_isa_list_len;
 
 volatile uint8_t  frameO2Latched[512];
-
 volatile uint8_t frameO2[512];
-
 volatile uint8_t frameReadySticky = 0;
 
-//volatile uint32_t dbg_decode_hits = 0;
 volatile uint8_t  disp3478_bestOff = 0;
-//volatile uint8_t  disp3478_bestMSB = 0;
-//volatile uint8_t  disp3478_bestScore = 0;
-
-
 volatile uint8_t  disp3478_isa8_lsb[16];
 volatile uint8_t  disp3478_isa8_msb[16];
 volatile uint8_t  disp3478_isa10_lsb[16];
 volatile uint8_t  disp3478_isa10_msb[16];
 volatile uint8_t  disp3478_isa8_len;
 volatile uint8_t  disp3478_isa10_len;
-
 volatile uint8_t  disp3478_ina8_lsb[64];
 volatile uint8_t  disp3478_ina8_len;
-
-//volatile uint16_t dbg_decode_hits;
-
-volatile uint8_t disp3478_isa_bits_len;
-
+volatile uint8_t  disp3478_isa_bits_len;
 volatile uint8_t  disp3478_seen_1A = 0;
 volatile uint8_t  disp3478_seen_0A = 0;
 volatile uint8_t  disp3478_opcode_score = 0;
 volatile uint32_t dbg_decode_hits = 0;
-
-
 volatile uint8_t  disp3478_bestMSB = 0;
 volatile uint8_t  disp3478_bestScore = 0;
-//volatile uint8_t  disp3478_opcode_hits = 0;
-//volatile uint8_t  disp3478_saw_1A = 0;
-//volatile uint8_t  disp3478_saw_0A = 0;
-
-
 volatile uint8_t  disp3478_bestStep = 0;   /* bytes are spaced by this many clocks */
 volatile uint8_t  disp3478_bestPre = 0;   /* dummy clocks before the 8 bits */
 volatile uint8_t  disp3478_bestPost = 0;   /* dummy clocks after the 8 bits */
-
 volatile uint8_t  disp3478_opcode_hits = 0;
 volatile uint8_t  disp3478_saw_1A = 0;
 volatile uint8_t  disp3478_saw_0A = 0;
-
 volatile uint8_t  disp3478_ina_bits[512];
 volatile uint16_t disp3478_ina_bitcount;
-
-volatile uint8_t disp3478_bestInv = 0;
-
+volatile uint8_t  disp3478_bestInv = 0;
 volatile uint64_t disp3478_isaBitsPacked = 0;   // LSB = first ISA bit captured
 volatile uint8_t  disp3478_isaBitsPackedLen = 0;
-
 volatile uint8_t  disp3478_tryScore[2][3];      // [inv][pre]
 volatile uint8_t  disp3478_tryBytes[2][3][8];   // [inv][pre][word], up to 8 words
 volatile uint8_t  disp3478_tryWords = 0;        // number of 10-clock words decoded
 
+// Live Watch: choose whether O2 sampling is on rising or falling edge
+volatile uint8_t sampleOnFallingEdge = 0;  // 0=rising (default), 1=falling
+
+// Internal: remembers what polarity is currently applied to TIM3_CH4
+static uint8_t appliedSampleOnFallingEdge = 0;
+
+volatile uint8_t  disp3478_isa10_len = 0;
+volatile uint16_t disp3478_isa10_list[16];   // 10-bit words stored in uint16_t
+
+/* SYNC region breakdown inside latched frame (for debugging) */
+volatile uint8_t  disp3478_segCount = 0;
+volatile uint16_t disp3478_segLen[8];      // length in O2 samples
+volatile uint8_t  disp3478_segSync[8];     // 0=INA region, 1=ISA region
+
+/* INA nibble decode (first few nibbles per INA region) */
+volatile uint8_t  disp3478_inaNibCount[8];
+
+/* Raw tagged preview + SYNC count sanity */
+volatile uint16_t disp3478_frameN = 0;
+volatile uint16_t disp3478_sync1_count = 0;
+volatile uint8_t  disp3478_tagPreview[64];
+
+volatile uint16_t disp3478_segSum = 0;              // sum of segLen[] the decoder produced
+
+volatile uint8_t  disp3478_segSyncFlat0 = 0, disp3478_segSyncFlat1 = 0, disp3478_segSyncFlat2 = 0, disp3478_segSyncFlat3 = 0, disp3478_segSyncFlat4 = 0;
+volatile uint16_t disp3478_segLenFlat0 = 0, disp3478_segLenFlat1 = 0, disp3478_segLenFlat2 = 0, disp3478_segLenFlat3 = 0, disp3478_segLenFlat4 = 0;
+
+volatile uint8_t disp3478_inaBestInv[8];
+volatile uint8_t disp3478_inaBestOff[8];
+volatile uint8_t disp3478_inaBestScore[8];
+
+volatile uint8_t disp3478_inaNontrivCount[8];
+volatile uint8_t disp3478_inaCountF[8];
+volatile uint8_t disp3478_inaCount0[8];
+volatile uint8_t disp3478_inaCountOther[8];
+
+volatile uint8_t  disp3478_inaNib[8][64];
+volatile uint8_t  disp3478_inaNontriv[8][64];
+
+volatile uint8_t  disp3478_inaHist[8][16];      // nibble frequency table
+volatile uint8_t  disp3478_inaModeNib[8];       // most frequent nibble value (0..15)
+volatile uint8_t  disp3478_inaStripCount[8];
+volatile uint8_t  disp3478_inaStripped[8][32];  // payload after stripping 0/F/mode
+
+volatile uint8_t disp3478_inaBestStripNib[8];   // which nibble (besides 0/F) we stripped
+volatile uint8_t disp3478_inaStripScore[8];     // how good the strip choice was
+volatile uint8_t disp3478_inaStripped[8][32];   // already have, keep 32 for now
 
 
 
@@ -725,6 +266,24 @@ static void LatchStable260(const uint8_t* frame, uint8_t len)
 
 void DMM_HandleO2Clock(void)
 {
+    /* ---------------- O2 edge select (rising vs falling) ----------------
+       TIM3_CH4 is configured for input capture. We switch CC4 polarity live:
+         CC4P=0 => rising
+         CC4P=1 => falling
+       You can change sampleOnFallingEdge in Live Watch before arming capture.
+    */
+    if (sampleOnFallingEdge != appliedSampleOnFallingEdge)
+    {
+        __disable_irq();
+        if (sampleOnFallingEdge)
+            TIM3->CCER |= TIM_CCER_CC4P;     // capture on falling
+        else
+            TIM3->CCER &= (uint16_t)~TIM_CCER_CC4P; // capture on rising
+        __enable_irq();
+
+        appliedSampleOnFallingEdge = sampleOnFallingEdge;
+    }
+
     GPIO_PinState syncLevel = HAL_GPIO_ReadPin(DMM_SYNC_GPIO_Port, DMM_SYNC_Pin);
     uint8_t syncNow = (syncLevel == GPIO_PIN_SET) ? 1u : 0u;
 
@@ -835,6 +394,7 @@ void DMM_HandleO2Clock(void)
 
 
 
+
 static uint8_t is_known_opcode(uint8_t b)
 {
     /* 3478A ROM disassembly shows these instruction bytes */
@@ -859,6 +419,199 @@ static uint8_t is_known_opcode(uint8_t b)
 
 
 
+
+
+static void Process3478Run(const uint8_t* s,
+    uint16_t runStart,
+    uint16_t runEnd,
+    uint8_t curSync,
+    uint8_t seg)
+{
+    uint16_t runLen = (uint16_t)(runEnd - runStart);
+
+    /* store segment info */
+    disp3478_segSync[seg] = curSync;
+    disp3478_segLen[seg] = runLen;
+    disp3478_segSum = (uint16_t)(disp3478_segSum + runLen);
+
+    if (curSync != 0u)
+        return; /* only decode INA when SYNC==0 */
+
+    /* ---- Find best inv/off for nibble decode (cap 32 nibbles) ---- */
+    uint8_t bestInv = 0u, bestOff = 0u, bestScore = 0u;
+
+    for (uint8_t inv = 0u; inv < 2u; inv++)
+    {
+        for (uint8_t off = 0u; off < 4u; off++)
+        {
+            uint16_t usable = (runLen > off) ? (uint16_t)(runLen - off) : 0u;
+            uint16_t nibs = (uint16_t)(usable / 4u);
+            if (nibs > 32u) nibs = 32u;
+
+            uint8_t score = 0u;
+
+            for (uint16_t n = 0; n < nibs; n++)
+            {
+                uint8_t v = 0;
+                for (uint8_t k = 0u; k < 4u; k++)
+                {
+                    uint16_t bi = (uint16_t)(runStart + off + (n * 4u) + k);
+                    uint8_t bit = (uint8_t)(s[bi] & 1u);
+                    if (inv) bit = (uint8_t)(1u - bit);
+                    v |= (uint8_t)((bit & 1u) << k);
+                }
+                v &= 0xFu;
+                if ((v != 0x0u) && (v != 0xFu)) score++;
+            }
+
+            if (score > bestScore)
+            {
+                bestScore = score;
+                bestInv = inv;
+                bestOff = off;
+            }
+        }
+    }
+
+    disp3478_inaBestInv[seg] = bestInv;
+    disp3478_inaBestOff[seg] = bestOff;
+    disp3478_inaBestScore[seg] = bestScore;
+
+    /* ---- Decode nibbles using best settings ---- */
+    uint16_t usable = (runLen > bestOff) ? (uint16_t)(runLen - bestOff) : 0u;
+    uint16_t nibs = (uint16_t)(usable / 4u);
+    if (nibs > 32u) nibs = 32u;
+
+    disp3478_inaNibCount[seg] = (uint8_t)nibs;
+
+    for (uint16_t n = 0; n < nibs; n++)
+    {
+        uint8_t v = 0;
+        for (uint8_t k = 0u; k < 4u; k++)
+        {
+            uint16_t bi = (uint16_t)(runStart + bestOff + (n * 4u) + k);
+            uint8_t bit = (uint8_t)(s[bi] & 1u);
+            if (bestInv) bit = (uint8_t)(1u - bit);
+            v |= (uint8_t)((bit & 1u) << k);
+        }
+        disp3478_inaNib[seg][n] = (uint8_t)(v & 0xFu);
+    }
+
+    /* ---- Histogram (kept for debug) ---- */
+    for (uint8_t b = 0; b < 16u; b++) disp3478_inaHist[seg][b] = 0;
+
+    for (uint16_t n = 0; n < nibs; n++)
+    {
+        uint8_t v = (uint8_t)(disp3478_inaNib[seg][n] & 0xFu);
+        disp3478_inaHist[seg][v]++;
+    }
+
+    /* mode nibble (debug only; we no longer strip by mode) */
+    {
+        uint8_t mode = 0u, modeCnt = 0u;
+        for (uint8_t v = 0u; v < 16u; v++)
+        {
+            uint8_t c = disp3478_inaHist[seg][v];
+            if (c > modeCnt) { modeCnt = c; mode = v; }
+        }
+        disp3478_inaModeNib[seg] = mode;
+    }
+
+    /* ---- Counts + nontrivial list ---- */
+    disp3478_inaNontrivCount[seg] = 0;
+    disp3478_inaCountF[seg] = 0;
+    disp3478_inaCount0[seg] = 0;
+    disp3478_inaCountOther[seg] = 0;
+
+    for (uint16_t n = 0; n < nibs; n++)
+    {
+        uint8_t v = (uint8_t)(disp3478_inaNib[seg][n] & 0xFu);
+
+        if (v == 0xFu) disp3478_inaCountF[seg]++;
+        else if (v == 0x0u) disp3478_inaCount0[seg]++;
+        else disp3478_inaCountOther[seg]++;
+
+        if ((v != 0x0u) && (v != 0xFu))
+        {
+            uint8_t k = disp3478_inaNontrivCount[seg];
+            if (k < 32u)
+            {
+                disp3478_inaNontriv[seg][k] = v;
+                disp3478_inaNontrivCount[seg] = (uint8_t)(k + 1u);
+            }
+        }
+    }
+
+    for (uint8_t k = disp3478_inaNontrivCount[seg]; k < 32u; k++)
+        disp3478_inaNontriv[seg][k] = 0;
+
+    /* ---- Strip candidate separator nibble X (instead of “mode”) ----
+       Always strip 0 and F, optionally strip one extra nibble from candidates. */
+    {
+        static const uint8_t cand[6] = { 1u, 8u, 14u, 7u, 6u, 9u };
+
+        uint8_t bestX = 0u;
+        uint8_t bestStripScore = 0u;
+        uint8_t bestLen = 0u;
+        uint8_t bestTmp[32];
+
+        for (uint8_t ci = 0; ci < 6u; ci++)
+        {
+            uint8_t X = cand[ci];
+            uint8_t tmp[32];
+            uint8_t tmpLen = 0u;
+
+            for (uint16_t n = 0; n < nibs; n++)
+            {
+                uint8_t v = (uint8_t)(disp3478_inaNib[seg][n] & 0xFu);
+
+                if (v == 0x0u) continue;
+                if (v == 0xFu) continue;
+                if (v == X)    continue;
+
+                if (tmpLen < 32u) tmp[tmpLen++] = v;
+            }
+
+            uint8_t score = 0u;
+
+            /* length preference */
+            if (tmpLen >= 22u && tmpLen <= 26u) score += 5u;      /* ~24 */
+            else if (tmpLen >= 10u && tmpLen <= 14u) score += 3u; /* ~12 */
+            else if (tmpLen >= 14u && tmpLen <= 18u) score += 1u; /* ~16 */
+
+            /* diversity penalty */
+            if (tmpLen > 0u)
+            {
+                uint8_t hist[16];
+                for (uint8_t i = 0u; i < 16u; i++) hist[i] = 0u;
+                for (uint8_t i = 0u; i < tmpLen; i++) hist[tmp[i] & 0xFu]++;
+
+                uint8_t maxBin = 0u;
+                for (uint8_t i = 0u; i < 16u; i++) if (hist[i] > maxBin) maxBin = hist[i];
+
+                if ((uint16_t)maxBin * 10u > (uint16_t)tmpLen * 7u)
+                {
+                    if (score > 0u) score--;
+                }
+            }
+
+            if (score > bestStripScore)
+            {
+                bestStripScore = score;
+                bestX = X;
+                bestLen = tmpLen;
+                for (uint8_t i = 0u; i < 32u; i++) bestTmp[i] = (i < tmpLen) ? tmp[i] : 0u;
+            }
+        }
+
+        disp3478_inaBestStripNib[seg] = bestX;
+        disp3478_inaStripScore[seg] = bestStripScore;
+        disp3478_inaStripCount[seg] = bestLen;
+        for (uint8_t i = 0u; i < 32u; i++) disp3478_inaStripped[seg][i] = bestTmp[i];
+    }
+}
+
+
 void Decode3478_LatchedFrame(void)
 {
     if (frameReady == 0u)
@@ -866,33 +619,67 @@ void Decode3478_LatchedFrame(void)
 
     frameReady = 0u;
 
-    disp3478_isa_list_len = 0u;
-    disp3478_opcode_hits = 0u;
-    disp3478_saw_1A = 0u;
-    disp3478_saw_0A = 0u;
-
-    disp3478_bestScore = 0u;
-    disp3478_bestStep = 10u;   /* proven */
-    disp3478_bestPre = 0u;
-    disp3478_bestPost = 0u;
-    disp3478_bestMSB = 0u;    /* assume LSB-first */
-    disp3478_bestOff = 0u;
-    disp3478_bestInv = 1u;    /* proven by your tryScore matrix */
-
     const uint8_t* s = frameO2Latched;
     uint16_t N = frameO2LatchedLen;
     if (N > 512u) N = 512u;
 
-    /* Collect ISA bits where SYNC==1 */
+    disp3478_frameN = N;
+
+    /* ---------------- Clear outputs ---------------- */
+    disp3478_isa10_len = 0;
+    for (uint8_t i = 0u; i < 16u; i++) disp3478_isa10_list[i] = 0;
+
+    disp3478_segCount = 0;
+    disp3478_segSum = 0;
+
+    for (uint8_t i = 0u; i < 8u; i++)
+    {
+        disp3478_segLen[i] = 0;
+        disp3478_segSync[i] = 0;
+
+        disp3478_inaNibCount[i] = 0;
+        for (uint8_t j = 0u; j < 32u; j++) disp3478_inaNib[i][j] = 0;
+
+        disp3478_inaBestInv[i] = 0;
+        disp3478_inaBestOff[i] = 0;
+        disp3478_inaBestScore[i] = 0;
+
+        disp3478_inaNontrivCount[i] = 0;
+        disp3478_inaCountF[i] = 0;
+        disp3478_inaCount0[i] = 0;
+        disp3478_inaCountOther[i] = 0;
+        for (uint8_t j = 0u; j < 32u; j++) disp3478_inaNontriv[i][j] = 0;
+
+        for (uint8_t b = 0u; b < 16u; b++) disp3478_inaHist[i][b] = 0;
+        disp3478_inaModeNib[i] = 0;
+
+        disp3478_inaStripCount[i] = 0;
+        for (uint8_t j = 0u; j < 32u; j++) disp3478_inaStripped[i][j] = 0;
+
+        disp3478_inaBestStripNib[i] = 0;
+        disp3478_inaStripScore[i] = 0;
+    }
+
+    disp3478_sync1_count = 0;
+    for (uint8_t i = 0u; i < 64u; i++) disp3478_tagPreview[i] = 0;
+
+    uint16_t pv = (N > 64u) ? 64u : N;
+    for (uint16_t i = 0u; i < pv; i++)
+        disp3478_tagPreview[i] = s[i];
+
+    /* ---------------- ISA bits (SYNC==1), ISA active-low ---------------- */
     uint8_t isaBits[128];
     uint16_t isaBitsLen = 0;
 
-    for (uint16_t i = 0; i < N; i++)
+    for (uint16_t i = 0u; i < N; i++)
     {
         uint8_t sync = (uint8_t)((s[i] >> 1) & 1u);
+        if (sync) disp3478_sync1_count++;
+
         if (sync)
         {
             uint8_t bit = (uint8_t)(s[i] & 1u);
+            bit = (uint8_t)(1u - (bit & 1u)); /* invert ISA */
             if (isaBitsLen < (uint16_t)sizeof(isaBits))
                 isaBits[isaBitsLen++] = bit;
         }
@@ -900,89 +687,101 @@ void Decode3478_LatchedFrame(void)
 
     disp3478_isa_bits_len = (uint8_t)((isaBitsLen > 255u) ? 255u : isaBitsLen);
 
-    if (isaBitsLen < 10u)
-        return;
-
-    /* Search offset 0..9 and pre 0..2, with inversion forced, LSB-first */
-    uint8_t bestScore = 0u;
-    uint8_t bestOff = 0u;
-    uint8_t bestPre = 0u;
-
-    for (uint8_t off = 0u; off < 10u; off++)
+    /* ---------------- ISA10 decode (LSB-first, stride 10) ---------------- */
+    uint16_t idx = 0u;
+    while ((uint16_t)(idx + 9u) < isaBitsLen)
     {
-        for (uint8_t pre = 0u; pre < 3u; pre++)
-        {
-            uint8_t score = 0u;
-            uint16_t idx = off;
+        uint16_t w = 0u;
+        for (uint8_t k = 0u; k < 10u; k++)
+            w |= (uint16_t)((isaBits[idx + k] & 1u) << k);
 
-            while ((uint16_t)(idx + pre + 7u) < isaBitsLen)
-            {
-                uint8_t b = 0u;
-                for (uint8_t k = 0u; k < 8u; k++)
-                {
-                    uint8_t bit = isaBits[idx + pre + k];
-                    /* inversion forced */
-                    bit = (uint8_t)(1u - bit);
-                    b |= (uint8_t)((bit & 1u) << k); /* LSB-first */
-                }
-
-                if (is_known_opcode(b))
-                    score++;
-
-                idx = (uint16_t)(idx + 10u);
-            }
-
-            /* choose best; tie-break prefer pre=1, then smaller off */
-            uint8_t take = 0u;
-            if (score > bestScore) take = 1u;
-            else if (score == bestScore && score != 0u)
-            {
-                if (bestPre != 1u && pre == 1u) take = 1u;
-                else if (bestPre == pre && off < bestOff) take = 1u;
-            }
-
-            if (take)
-            {
-                bestScore = score;
-                bestOff = off;
-                bestPre = pre;
-            }
-        }
-    }
-
-    disp3478_bestScore = bestScore;
-    disp3478_bestOff = bestOff;
-    disp3478_bestPre = bestPre;
-    disp3478_bestPost = (uint8_t)(10u - (bestPre + 8u));
-    disp3478_bestMSB = 0u;
-    disp3478_bestInv = 1u;
-
-    /* Decode ISA bytes using the chosen off+pre */
-    uint16_t idx = bestOff;
-
-    while ((uint16_t)(idx + bestPre + 7u) < isaBitsLen)
-    {
-        uint8_t b = 0u;
-        for (uint8_t k = 0u; k < 8u; k++)
-        {
-            uint8_t bit = isaBits[idx + bestPre + k];
-            bit = (uint8_t)(1u - bit); /* invert */
-            b |= (uint8_t)((bit & 1u) << k);
-        }
-
-        if (disp3478_isa_list_len < (uint8_t)sizeof(disp3478_isa_list))
-            disp3478_isa_list[disp3478_isa_list_len++] = b;
-
-        if (is_known_opcode(b))
-        {
-            disp3478_opcode_hits++;
-            if (b == 0x1A) disp3478_saw_1A = 1u;
-            if (b == 0x0A) disp3478_saw_0A = 1u;
-        }
+        if (disp3478_isa10_len < 16u)
+            disp3478_isa10_list[disp3478_isa10_len++] = w;
 
         idx = (uint16_t)(idx + 10u);
     }
+
+    /* ---------------- Segment by SYNC level, decode INA on SYNC==0 ---------------- */
+    if (N == 0u)
+        return;
+
+    uint8_t curSync = (uint8_t)((s[0] >> 1) & 1u);
+    uint16_t runStart = 0u;
+    uint8_t seg = 0u;
+
+    for (uint16_t i = 1u; i < N; i++)
+    {
+        uint8_t syncNow = (uint8_t)((s[i] >> 1) & 1u);
+        if (syncNow != curSync)
+        {
+            if (seg < 8u)
+            {
+                Process3478Run(s, runStart, i, curSync, seg);
+                seg++;
+            }
+            curSync = syncNow;
+            runStart = i;
+        }
+    }
+
+    /* final run */
+    if (seg < 8u)
+    {
+        Process3478Run(s, runStart, N, curSync, seg);
+        seg++;
+    }
+
+    /* hard clear unused entries */
+    for (uint8_t i = seg; i < 8u; i++)
+    {
+        disp3478_segSync[i] = 0;
+        disp3478_segLen[i] = 0;
+
+        disp3478_inaNibCount[i] = 0;
+        disp3478_inaBestInv[i] = 0;
+        disp3478_inaBestOff[i] = 0;
+        disp3478_inaBestScore[i] = 0;
+
+        disp3478_inaNontrivCount[i] = 0;
+        disp3478_inaCountF[i] = 0;
+        disp3478_inaCount0[i] = 0;
+        disp3478_inaCountOther[i] = 0;
+
+        disp3478_inaModeNib[i] = 0;
+
+        disp3478_inaStripCount[i] = 0;
+        disp3478_inaBestStripNib[i] = 0;
+        disp3478_inaStripScore[i] = 0;
+
+        for (uint8_t b = 0u; b < 16u; b++) disp3478_inaHist[i][b] = 0;
+
+        for (uint8_t j = 0u; j < 32u; j++) {
+            disp3478_inaNib[i][j] = 0;
+            disp3478_inaNontriv[i][j] = 0;
+            disp3478_inaStripped[i][j] = 0;
+        }
+    }
+
+    disp3478_segCount = seg;
+
+    /* Flatten first 5 segments for Live Watch sanity */
+    disp3478_segSyncFlat0 = (disp3478_segCount > 0u) ? disp3478_segSync[0] : 0;
+    disp3478_segSyncFlat1 = (disp3478_segCount > 1u) ? disp3478_segSync[1] : 0;
+    disp3478_segSyncFlat2 = (disp3478_segCount > 2u) ? disp3478_segSync[2] : 0;
+    disp3478_segSyncFlat3 = (disp3478_segCount > 3u) ? disp3478_segSync[3] : 0;
+    disp3478_segSyncFlat4 = (disp3478_segCount > 4u) ? disp3478_segSync[4] : 0;
+
+    disp3478_segLenFlat0 = (disp3478_segCount > 0u) ? disp3478_segLen[0] : 0;
+    disp3478_segLenFlat1 = (disp3478_segCount > 1u) ? disp3478_segLen[1] : 0;
+    disp3478_segLenFlat2 = (disp3478_segCount > 2u) ? disp3478_segLen[2] : 0;
+    disp3478_segLenFlat3 = (disp3478_segCount > 3u) ? disp3478_segLen[3] : 0;
+    disp3478_segLenFlat4 = (disp3478_segCount > 4u) ? disp3478_segLen[4] : 0;
 }
+
+
+
+
+
 
 
 
