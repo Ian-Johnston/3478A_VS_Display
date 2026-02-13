@@ -92,7 +92,7 @@ volatile uint16_t lastCmd = 0;
 volatile uint8_t  lastDataByte = 0;
 volatile uint8_t  payloadBytesExpected = 0;
 volatile uint8_t  payloadBytesGot = 0;
-volatile uint8_t  frameReady = 0;
+//volatile uint8_t  frameReady = 0;
 
 volatile uint8_t  regA[6], regB[6], regC[6];
 volatile uint8_t  ann[2];
@@ -486,15 +486,15 @@ volatile uint16_t lastPayloadLen = 0;
 volatile uint8_t  lastPayload[128];   /* make big enough */
 
 //uint8_t prevPwo = 0;
-uint8_t pwoNow = 0;
+//uint8_t pwoNow = 0;
 
-volatile uint32_t dbg_sync_rise = 0;
-volatile uint32_t dbg_sync_fall = 0;
+//volatile uint32_t dbg_sync_rise = 0;
+//volatile uint32_t dbg_sync_fall = 0;
 volatile uint32_t dbg_isa_bits = 0;
 volatile uint32_t dbg_isa_bytes = 0;
 volatile uint32_t dbg_ina_bytes = 0;
 
-uint8_t prevPwo = 0;
+//uint8_t prevPwo = 0;
 
 //volatile uint8_t  prevSync = 0;
 
@@ -505,6 +505,162 @@ volatile uint8_t  isaBytes[8];
 
 //volatile uint8_t  inaShift = 0;
 //volatile uint8_t  inaBitCount8 = 0;
+
+
+/* NEW globals for raw capture + alignment */
+uint8_t  pwoPrev = 0;
+//uint32_t dbg_pwo_rise = 0;
+//uint32_t dbg_pwo_fall = 0;
+
+//uint16_t isaRawLen = 0;
+//uint8_t  isaRawBits[128];   /* enough for ISA bursts */
+
+//uint16_t inaRawLen = 0;
+//uint8_t  inaRawBits[512];   /* enough for INA bursts */
+
+uint8_t  isaBitAlign = 0xFF; /* 0..7 when known, 0xFF unknown */
+uint8_t  isaAlignLocked = 0; /* 0/1: once we find a good align in this PWO frame */
+
+volatile uint8_t  isaRawBits[64];
+volatile uint16_t isaRawLen = 0;
+
+volatile uint8_t  inaRawBits[512];
+volatile uint16_t inaRawLen = 0;
+
+volatile uint8_t  isaCmdCandidates[8];
+
+volatile uint32_t dbg_sync_rise = 0;
+volatile uint32_t dbg_sync_fall = 0;
+
+uint8_t inaBitAlign = 0;
+
+
+/* Raw per-PWO-frame capture (bits, LSB-first in time order as sampled) */
+volatile uint8_t  frameIsa[64];
+volatile uint16_t frameIsaLen = 0;      /* number of ISA bits captured this PWO frame */
+
+volatile uint8_t  frameInaN[512];
+volatile uint16_t frameInaLen = 0;      /* number of INA bits captured this PWO frame */
+
+/* Optional: a stable snapshot you can inspect after PWO falls */
+volatile uint8_t  frameIsaLatched[64];
+volatile uint16_t frameIsaLatchedLen = 0;
+
+volatile uint8_t  frameInaLatched[512];
+volatile uint16_t frameInaLatchedLen = 0;
+
+volatile uint8_t  frameReady = 0;       /* set to 1 on PWO falling edge */
+
+volatile uint8_t  prevPwo = 0;          /* for PWO edge detect */
+
+volatile uint32_t dbg_pwo_rise = 0;
+volatile uint32_t dbg_pwo_fall = 0;
+volatile uint32_t dbg_frame_isa_ovf = 0;
+volatile uint32_t dbg_frame_ina_ovf = 0;
+
+volatile uint8_t  frameLatchEnable = 0;   /* set to 1 in Live Watch to freeze NEXT complete PWO frame */
+volatile uint8_t  frameHold = 0;          /* internal: 1 = latched and holding, 0 = free-running */
+
+
+/* ===== Frame capture (PWO window) ===== */
+volatile uint8_t  frameIsa[64];
+volatile uint16_t frameIsaLen;
+
+volatile uint8_t  frameInaN[512];
+volatile uint16_t frameInaLen;
+
+/* ===== Latched frame ===== */
+volatile uint8_t  frameIsaLatched[64];
+volatile uint16_t frameIsaLatchedLen;
+
+volatile uint8_t  frameInaLatched[512];
+volatile uint16_t frameInaLatchedLen;
+
+volatile uint8_t  frameLatchEnable;   /* set this to 1 in Live Watch to latch next full frame */
+volatile uint8_t  frameHold;          /* goes 1 when latch happened */
+volatile uint8_t  frameReady;         /* pulses 1 when a frame is latched (then cleared next call) */
+
+volatile uint8_t  frameBaselineValid = 0;
+volatile uint16_t frameIsaBaseLen = 0;
+volatile uint16_t frameInaBaseLen = 0;
+volatile uint8_t  frameIsaBase[64];
+volatile uint8_t  frameInaBase[512];
+
+volatile uint8_t  frameIsa[64];      /* bits: 0/1 */
+volatile uint8_t  frameIna[512];     /* bits: 0/1 */
+volatile uint32_t dbg_frame_diff = 0;
+
+volatile uint8_t  inFrame = 0;
+volatile uint8_t  framePrevValid = 0;
+volatile uint16_t frameIsaPrevLen = 0;
+volatile uint16_t frameInaPrevLen = 0;
+volatile uint8_t  frameIsaPrev[64];
+volatile uint8_t  frameInaPrev[512];
+volatile uint32_t dbg_frame_latched = 0;
+volatile uint32_t dbg_frame_end = 0;
+volatile uint8_t  frameActive = 0;
+volatile uint8_t  inPwoWindow;
+volatile uint8_t  syncRiseCountInPwo;
+volatile uint8_t  dbg_sync_rise_in_pwo;
+volatile uint8_t  frameReady;
+volatile uint8_t  frameKind;
+
+volatile uint8_t  _pwoPrev;
+volatile uint8_t  _syncPrevInPwo;
+volatile uint8_t  _syncRiseCountInPwo;
+uint8_t  frameSyncRiseCount = 0;
+uint32_t dbg_ina_bits = 0;
+volatile uint8_t  syncRiseInPwo = 0;
+
+volatile uint8_t frameKindLatched = 0;       /* 0=none, 1=single-sync frame, 2=double-sync frame */
+volatile uint8_t frameLatchEnablePrev = 0;  /* internal: detect re-arm */
+
+volatile uint16_t frameO2Len = 0;          /* live timeline length (O2 clocks inside PWO) */
+volatile uint16_t frameO2LatchedLen = 0;   /* latched timeline length */
+
+//volatile uint8_t  frameKindLatched = 0;    /* 0 none, 1 single-sync frame, 2 dual-sync frame */
+
+/* ---- Decoded display RAM from last latched frame ---- */
+volatile uint8_t disp3478_ram[12];
+volatile uint8_t disp3478_hi[12];
+volatile uint8_t disp3478_lo[12];
+volatile uint8_t disp3478_valid;
+
+/* Optional debug: what ISA bytes were seen in the latched frame */
+volatile uint8_t disp3478_isa_list[16];
+volatile uint8_t disp3478_isa_list_len;
+
+volatile uint8_t  frameO2Latched[512];
+
+volatile uint8_t frameO2[512];
+
+volatile uint8_t frameReadySticky = 0;
+
+//volatile uint32_t dbg_decode_hits = 0;
+volatile uint8_t  disp3478_bestOff = 0;
+volatile uint8_t  disp3478_bestMSB = 0;
+volatile uint8_t  disp3478_bestScore = 0;
+
+
+volatile uint8_t  disp3478_isa8_lsb[16];
+volatile uint8_t  disp3478_isa8_msb[16];
+volatile uint8_t  disp3478_isa10_lsb[16];
+volatile uint8_t  disp3478_isa10_msb[16];
+volatile uint8_t  disp3478_isa8_len;
+volatile uint8_t  disp3478_isa10_len;
+
+volatile uint8_t  disp3478_ina8_lsb[64];
+volatile uint8_t  disp3478_ina8_len;
+
+//volatile uint16_t dbg_decode_hits;
+
+volatile uint8_t disp3478_isa_bits_len;
+
+volatile uint8_t  disp3478_seen_1A = 0;
+volatile uint8_t  disp3478_seen_0A = 0;
+volatile uint8_t  disp3478_opcode_score = 0;
+volatile uint32_t dbg_decode_hits = 0;
+
 
 
 
@@ -542,147 +698,296 @@ static void LatchStable260(const uint8_t* frame, uint8_t len)
 void DMM_HandleO2Clock(void)
 {
     GPIO_PinState syncLevel = HAL_GPIO_ReadPin(DMM_SYNC_GPIO_Port, DMM_SYNC_Pin);
+    uint8_t syncNow = (syncLevel == GPIO_PIN_SET) ? 1u : 0u;
 
-    lastSync = (syncLevel == GPIO_PIN_SET) ? 1 : 0;
-    syncState = lastSync;
+    lastSync = syncNow;
+    syncState = syncNow;
 
-    if (syncLevel == GPIO_PIN_SET) syncHighCount++;
-    else                           syncLowCount++;
+    if (syncNow) syncHighCount++;
+    else         syncLowCount++;
 
     O2Count++;
 
-    /* Only decode while PWO is active */
-    if (HAL_GPIO_ReadPin(DMM_PWO_GPIO_Port, DMM_PWO_Pin) != GPIO_PIN_SET) {
+    /* Sample PWO every O2 clock so we can detect end-of-frame */
+    uint8_t pwoNow = (HAL_GPIO_ReadPin(DMM_PWO_GPIO_Port, DMM_PWO_Pin) == GPIO_PIN_SET) ? 1u : 0u;
+
+    /* ---------------- PWO FALLING EDGE = END OF FRAME ---------------- */
+    if ((prevPwo == 1u) && (pwoNow == 0u)) {
+
+        /* Decide frame kind ONLY here (no flicker) */
+        uint8_t frameKindNow = (syncRiseInPwo >= 2u) ? 2u : 1u;
+
+        /* Latch only if armed, not already holding, and it's a kind-2 frame */
+        if ((frameLatchEnable == 1u) && (frameHold == 0u) && (frameKindNow == 2u)) {
+
+            /* Copy lengths (clamp) */
+            frameIsaLatchedLen = frameIsaLen;
+            if (frameIsaLatchedLen > (uint16_t)sizeof(frameIsaLatched)) frameIsaLatchedLen = sizeof(frameIsaLatched);
+
+            frameInaLatchedLen = frameInaLen;
+            if (frameInaLatchedLen > (uint16_t)sizeof(frameInaLatched)) frameInaLatchedLen = sizeof(frameInaLatched);
+
+            frameO2LatchedLen = frameO2Len;
+            if (frameO2LatchedLen > (uint16_t)sizeof(frameO2Latched))  frameO2LatchedLen = sizeof(frameO2Latched);
+
+            /* Copy ISA bits */
+            for (uint16_t i = 0; i < frameIsaLatchedLen; i++) frameIsaLatched[i] = frameIsa[i];
+            for (uint16_t i = frameIsaLatchedLen; i < sizeof(frameIsaLatched); i++) frameIsaLatched[i] = 0;
+
+            /* Copy INA bits */
+            for (uint16_t i = 0; i < frameInaLatchedLen; i++) frameInaLatched[i] = frameIna[i];
+            for (uint16_t i = frameInaLatchedLen; i < sizeof(frameInaLatched); i++) frameInaLatched[i] = 0;
+
+            /* Copy tagged O2 stream */
+            for (uint16_t i = 0; i < frameO2LatchedLen; i++) frameO2Latched[i] = frameO2[i];
+            for (uint16_t i = frameO2LatchedLen; i < sizeof(frameO2Latched); i++) frameO2Latched[i] = 0;
+
+            frameKindLatched = frameKindNow;
+            frameHold = 1u;
+            frameReady = 1u;          /* one-shot pulse (decoder consumes it) */
+            frameReadySticky = 1u;    /* sticky: stays 1 so you can SEE a capture happened */
+            frameLatchEnable = 0u;
+        }
+
+        /* Reset per-frame counters/buffers for next frame */
+        syncRiseInPwo = 0;
+
+        frameIsaLen = 0;
+        frameInaLen = 0;
+        frameO2Len = 0;
+
+        /* Re-seed edge detect for next frame */
+        prevSync = syncNow;
+        prevPwo = pwoNow;
         return;
     }
 
-    /* ================= ISA / INA (3478A variable ISA length) ================= */
+    /* Track PWO state for next call */
+    prevPwo = pwoNow;
 
-    /* SYNC level (sampled each O2 clock) */
-    uint8_t syncNow = (syncLevel == GPIO_PIN_SET) ? 1u : 0u;
+    /* If PWO not active, do not collect anything */
+    if (pwoNow == 0u) {
+        prevSync = syncNow;
+        return;
+    }
 
-    /* --------- EDGE DETECT (MUST RUN EVERY O2 CLOCK) --------- */
-
-    /* SYNC rising: INA -> ISA */
+    /* ---------------- Inside PWO window: count SYNC edges ---------------- */
     if ((prevSync == 0u) && (syncNow == 1u)) {
-
-        /* CLOSE OUT PREVIOUS INA payload (belongs to previous command) */
-        lastCmdId = currentCmdId;
-        lastCmdLen = currentCmdLen;
-
-        for (uint8_t i = 0; i < sizeof(lastCmdBytes); i++) {
-            if (i < lastCmdLen && i < sizeof(currentCmdBytes)) lastCmdBytes[i] = currentCmdBytes[i];
-            else                                               lastCmdBytes[i] = 0;
-        }
-
-        lastPayloadLen = payloadBufLen;
-        if (lastPayloadLen > sizeof(lastPayload)) lastPayloadLen = sizeof(lastPayload);
-
-        for (uint16_t i = 0; i < lastPayloadLen; i++) {
-            lastPayload[i] = payloadBuf[i];
-        }
-
-        /* mirrors (optional) */
-        lastCmdPrev = lastCmdId;
-        lastInaLenPrev = (uint16_t)payloadBufLen;
-
-        /* START NEW ISA burst: skip 2 dummy clocks */
-        isaGap2 = 2;
-        isaShift = 0;
-        isaBitCount8 = 0;
-        isaLen = 0;
-
-        /* Reset INA accumulator ready for next INA phase */
-        payloadBufLen = 0;
-        inaGap2 = 0;
-        inaShift = 0;
-        inaBitCount8 = 0;
-
+        syncRiseInPwo++;
         dbg_sync_rise++;
     }
-    /* SYNC falling: ISA -> INA */
     else if ((prevSync == 1u) && (syncNow == 0u)) {
-
-        /* FINALIZE ISA burst into currentCmdBytes */
-        currentCmdLen = isaLen;
-
-        for (uint8_t i = 0; i < sizeof(currentCmdBytes); i++) {
-            if (i < currentCmdLen && i < sizeof(isaBytes)) currentCmdBytes[i] = isaBytes[i];
-            else                                           currentCmdBytes[i] = 0;
-        }
-
-        currentCmdId = (currentCmdLen > 0u) ? currentCmdBytes[0] : 0u;
-
-        /* mirrors (optional) */
-        lastCmd10 = currentCmdId;
-        lastCmd = currentCmdId;
-        currentCmd10 = currentCmdId;
-
-        /* START INA burst: skip 2 dummy clocks */
-        inaGap2 = 2;
-        inaShift = 0;
-        inaBitCount8 = 0;
-
-        payloadBufLen = 0;
-
         dbg_sync_fall++;
     }
+    prevSync = syncNow;
 
-    /* --------- DATA SAMPLING --------- */
-
+    /* ---------------- Collect RAW bits ---------------- */
     if (syncNow == 1u) {
-
-        /* ================= ISA bytes ================= */
-        uint8_t bit = (uint8_t)HAL_GPIO_ReadPin(DMM_ISA_GPIO_Port, DMM_ISA_Pin) & 1u;
+        /* ISA bit */
+        uint8_t bit = (uint8_t)(HAL_GPIO_ReadPin(DMM_ISA_GPIO_Port, DMM_ISA_Pin) & 1u);
         dbg_isa_bits++;
 
-        if (isaGap2) {
-            isaGap2--;
-        }
-        else {
-            isaShift |= (uint8_t)(bit << isaBitCount8);
-            isaBitCount8++;
+        if (frameIsaLen < sizeof(frameIsa)) frameIsa[frameIsaLen++] = bit;
 
-            if (isaBitCount8 == 8u) {
-                if (isaLen < sizeof(isaBytes)) {
-                    isaBytes[isaLen++] = isaShift;
-                }
-                isaShift = 0;
-                isaBitCount8 = 0;
-                dbg_isa_bytes++;
-            }
-        }
+        /* tagged stream: (pwo<<2)|(sync<<1)|bit */
+        if (frameO2Len < sizeof(frameO2)) frameO2[frameO2Len++] = (uint8_t)((1u << 2) | (1u << 1) | (bit & 1u));
     }
     else {
+        /* INA bit */
+        uint8_t bit = (uint8_t)(HAL_GPIO_ReadPin(DMM_INA_GPIO_Port, DMM_INA_Pin) & 1u);
+        dbg_ina_bits++;
 
-        /* ================= INA bytes ================= */
-        uint8_t bit = (uint8_t)HAL_GPIO_ReadPin(DMM_INA_GPIO_Port, DMM_INA_Pin) & 1u;
+        if (frameInaLen < sizeof(frameIna)) frameIna[frameInaLen++] = bit;
 
-        if (inaGap2) {
-            inaGap2--;
-            /* do not return; just skip dummy clocks */
-        }
-        else {
-            inaShift |= (uint8_t)(bit << inaBitCount8);
-            inaBitCount8++;
+        /* tagged stream */
+        if (frameO2Len < sizeof(frameO2)) frameO2[frameO2Len++] = (uint8_t)((1u << 2) | (0u << 1) | (bit & 1u));
+    }
+}
 
-            if (inaBitCount8 == 8u) {
-                uint8_t b = inaShift;
-                inaShift = 0;
-                inaBitCount8 = 0;
 
-                if (payloadBufLen < sizeof(payloadBuf)) {
-                    payloadBuf[payloadBufLen++] = b;
-                }
+/* Put this near the top of timer.c (file scope), NOT inside a function */
+static uint8_t is_known_opcode(uint8_t b)
+{
+    switch (b) {
+    case 0xFC: case 0xFD:
+    case 0xB8: case 0xC8:
+    case 0x2A: case 0xBC:
+    case 0x1A: case 0x0A:
+        return 1u;
+    default:
+        return 0u;
+    }
+}
 
-                dbg_ina_bytes++;
+void Decode3478_LatchedFrame(void)
+{
+    if (frameReady == 0u) return;
+
+    dbg_decode_hits++;
+
+    /* Don’t clear frameReady until the end (so you can see it go high) */
+    disp3478_valid = 0u;
+    disp3478_isa_list_len = 0u;
+
+    for (uint8_t i = 0; i < 12u; i++) {
+        disp3478_hi[i] = 0u;
+        disp3478_lo[i] = 0u;
+        disp3478_ram[i] = 0u;
+    }
+
+    const uint8_t* s = frameO2Latched;   /* packed: (sync<<2)|(isa<<1)|ina */
+    uint16_t N = frameO2LatchedLen;
+    if (N > 512u) N = 512u;
+
+    /* ------------------------------------------------------------
+       STEP 1: Find best 10-bit-word alignment on ISA stream
+       Word layout we assume: [dummy0][dummy1][b0..b7]  (LSB-first)
+       i.e. payload byte = ISA bits at positions base+2..base+9
+       ------------------------------------------------------------ */
+    uint8_t bestOff = 0u;
+    uint8_t bestScore = 0u;
+
+    for (uint8_t off = 0u; off < 10u; off++) {
+
+        uint8_t score = 0u;
+        uint16_t base = off;
+
+        /* Count opcodes found for this alignment */
+        while ((base + 9u) < N) {
+
+            uint8_t b = 0u;
+            for (uint8_t j = 0u; j < 8u; j++) {
+                uint8_t isaBit = (uint8_t)((s[base + 2u + j] >> 1) & 1u);
+                b |= (uint8_t)(isaBit << j);   /* LSB-first */
             }
+
+            if (is_known_opcode(b)) score++;
+
+            base = (uint16_t)(base + 10u);
+        }
+
+        if (score > bestScore) {
+            bestScore = score;
+            bestOff = off;
         }
     }
 
-    /* Update prevSync ONCE, at the very end */
-    prevSync = syncNow;
+    disp3478_bestOff = bestOff;
+    disp3478_bestScore = bestScore;
+
+    /* ------------------------------------------------------------
+       STEP 2: Build ISA opcode list using bestOff (for debug)
+       ------------------------------------------------------------ */
+    {
+        uint16_t base = bestOff;
+
+        while ((base + 9u) < N) {
+
+            uint8_t b = 0u;
+            for (uint8_t j = 0u; j < 8u; j++) {
+                uint8_t isaBit = (uint8_t)((s[base + 2u + j] >> 1) & 1u);
+                b |= (uint8_t)(isaBit << j);
+            }
+
+            if (disp3478_isa_list_len < sizeof(disp3478_isa_list)) {
+                disp3478_isa_list[disp3478_isa_list_len++] = b;
+            }
+
+            base = (uint16_t)(base + 10u);
+        }
+
+        for (uint8_t i = disp3478_isa_list_len; i < sizeof(disp3478_isa_list); i++) {
+            disp3478_isa_list[i] = 0u;
+        }
+    }
+
+    /* If we found *no* opcodes at all, this capture probably isn’t aligned/real */
+    /* Still consume frameReady so you can re-arm and try again */
+    if (bestScore == 0u) {
+        frameReady = 0u;
+        return;
+    }
+
+    /* ------------------------------------------------------------
+       STEP 3: Parse stream by 10-bit words:
+               - Watch ISA byte each word
+               - When ISA==0x1A : read next 12 INA nibbles (bits 2..5)
+               - When ISA==0x0A : read next 12 INA nibbles (bits 2..5)
+       ------------------------------------------------------------ */
+    uint8_t want_hi = 0u, want_lo = 0u;
+    uint8_t hi_idx = 0u, lo_idx = 0u;
+
+    uint16_t base = bestOff;
+
+    while ((base + 9u) < N) {
+
+        /* ISA byte from this word */
+        uint8_t op = 0u;
+        for (uint8_t j = 0u; j < 8u; j++) {
+            uint8_t isaBit = (uint8_t)((s[base + 2u + j] >> 1) & 1u);
+            op |= (uint8_t)(isaBit << j);
+        }
+
+        if (op == 0x1Au) {
+            want_hi = 1u;
+            want_lo = 0u;
+            hi_idx = 0u;
+
+            /* next 12 words contain 12 nibbles on INA */
+            for (uint8_t n = 0u; n < 12u; n++) {
+                base = (uint16_t)(base + 10u);
+                if ((base + 9u) >= N) break;
+
+                uint8_t nib = 0u;
+                /* nibble assumed at INA bits base+2..base+5 (LSB-first) */
+                for (uint8_t k = 0u; k < 4u; k++) {
+                    uint8_t inaBit = (uint8_t)(s[base + 2u + k] & 1u);
+                    nib |= (uint8_t)(inaBit << k);
+                }
+                if (hi_idx < 12u) disp3478_hi[hi_idx++] = nib;
+            }
+        }
+        else if (op == 0x0Au) {
+            want_lo = 1u;
+            want_hi = 0u;
+            lo_idx = 0u;
+
+            for (uint8_t n = 0u; n < 12u; n++) {
+                base = (uint16_t)(base + 10u);
+                if ((base + 9u) >= N) break;
+
+                uint8_t nib = 0u;
+                for (uint8_t k = 0u; k < 4u; k++) {
+                    uint8_t inaBit = (uint8_t)(s[base + 2u + k] & 1u);
+                    nib |= (uint8_t)(inaBit << k);
+                }
+                if (lo_idx < 12u) disp3478_lo[lo_idx++] = nib;
+            }
+        }
+
+        base = (uint16_t)(base + 10u);
+    }
+
+    /* Combine if we got both halves */
+    if ((hi_idx == 12u) && (lo_idx == 12u)) {
+        for (uint8_t k = 0u; k < 12u; k++) {
+            disp3478_ram[k] = (uint8_t)((disp3478_hi[k] << 4) | (disp3478_lo[k] & 0x0Fu));
+        }
+        disp3478_valid = 1u;
+    }
+
+    frameReady = 0u; /* consume capture */
 }
+
+
+
+
+
+
+
+
+
+
 
 
 

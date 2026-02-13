@@ -71,6 +71,8 @@ uint8_t inaState = 0;
 
 extern volatile uint8_t logReady;
 
+
+
 //******************************************************************************
 // HP Symbols
 
@@ -101,6 +103,8 @@ volatile uint8_t Init_Completed_flag = 0;
 
 // Private function prototypes
 void SystemClock_Config(void);
+
+
 
 //******************************************************************************
 
@@ -207,13 +211,17 @@ int main(void) {
 
 		HAL_GPIO_TogglePin(GPIOC, TEST_OUT_Pin); // Test LED toggle
 
-		DisplayMain();
+		//DisplayMain();
 
-		HAL_Delay(10);
+		//HAL_Delay(10);
 
-		DisplayAnnunciators();
+		//DisplayAnnunciators();
 
-		HAL_Delay(10);
+		//HAL_Delay(10);
+
+		// 3478A capture
+		Decode3478_LatchedFrame();
+
 	}
 
 }
