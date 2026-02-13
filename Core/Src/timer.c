@@ -664,10 +664,18 @@ volatile uint32_t dbg_decode_hits = 0;
 
 volatile uint8_t  disp3478_bestMSB = 0;
 volatile uint8_t  disp3478_bestScore = 0;
+//volatile uint8_t  disp3478_opcode_hits = 0;
+//volatile uint8_t  disp3478_saw_1A = 0;
+//volatile uint8_t  disp3478_saw_0A = 0;
+
+
+volatile uint8_t  disp3478_bestStep = 0;   /* bytes are spaced by this many clocks */
+volatile uint8_t  disp3478_bestPre = 0;   /* dummy clocks before the 8 bits */
+volatile uint8_t  disp3478_bestPost = 0;   /* dummy clocks after the 8 bits */
+
 volatile uint8_t  disp3478_opcode_hits = 0;
 volatile uint8_t  disp3478_saw_1A = 0;
 volatile uint8_t  disp3478_saw_0A = 0;
-
 
 
 
@@ -813,6 +821,7 @@ void DMM_HandleO2Clock(void)
 
 
 
+/* helper: keep this ABOVE Decode3478_LatchedFrame() (file-scope), not inside it */
 static uint8_t is_known_opcode(uint8_t b)
 {
     switch (b) {
@@ -824,206 +833,158 @@ static uint8_t is_known_opcode(uint8_t b)
     }
 }
 
-static uint8_t assemble8_lsb(const uint8_t* bits, uint16_t start)
-{
-    uint8_t b = 0;
-    for (uint8_t j = 0; j < 8u; j++) {
-        b |= (uint8_t)((bits[start + j] & 1u) << j);
-    }
-    return b;
-}
-
-static uint8_t assemble8_msb(const uint8_t* bits, uint16_t start)
-{
-    uint8_t b = 0;
-    for (uint8_t j = 0; j < 8u; j++) {
-        b = (uint8_t)((b << 1) | (bits[start + j] & 1u));
-    }
-    return b;
-}
-
-static uint8_t assemble4_lsb(const uint8_t* bits, uint16_t start)
-{
-    uint8_t n = 0;
-    n |= (uint8_t)((bits[start + 0u] & 1u) << 0);
-    n |= (uint8_t)((bits[start + 1u] & 1u) << 1);
-    n |= (uint8_t)((bits[start + 2u] & 1u) << 2);
-    n |= (uint8_t)((bits[start + 3u] & 1u) << 3);
-    return (uint8_t)(n & 0x0Fu);
-}
-
 void Decode3478_LatchedFrame(void)
 {
+    /* Only decode once per capture */
     if (frameReady == 0u) return;
 
-    /* consume capture */
-    frameReady = 0u;
+    dbg_decode_hits++;
 
+    /* DO NOT clear frameReady at the top; clear at the end so you can see it */
     disp3478_valid = 0u;
-    disp3478_isa_list_len = 0u;
-    disp3478_opcode_hits = 0u;
-    disp3478_saw_1A = 0u;
-    disp3478_saw_0A = 0u;
 
+    disp3478_isa_list_len = 0u;
     for (uint8_t i = 0; i < 12u; i++) {
         disp3478_hi[i] = 0u;
         disp3478_lo[i] = 0u;
         disp3478_ram[i] = 0u;
     }
 
+    disp3478_opcode_hits = 0u;
+    disp3478_saw_1A = 0u;
+    disp3478_saw_0A = 0u;
+
     const uint8_t* s = frameO2Latched; /* packed: (sync<<2)|(isa<<1)|ina */
     uint16_t N = frameO2LatchedLen;
     if (N > 512u) N = 512u;
 
-    /* -------- split into SYNC-high runs and SYNC-low runs -------- */
-    uint16_t runStart = 0;
-    uint8_t  runSync = (uint8_t)((s[0] >> 2) & 1u);
+    /* ---------------- Build ISA bitstream = all ISA bits during SYNC==1 ---------------- */
+    static uint8_t isaBits[512];
+    uint16_t isaBitsLen = 0u;
 
-    /* When we see opcode 0x1A/0x0A, we will decode the *next* SYNC-low run */
-    uint8_t pending_hi = 0u;
-    uint8_t pending_lo = 0u;
+    for (uint16_t i = 0; i < N; i++) {
+        uint8_t sync = (uint8_t)((s[i] >> 2) & 1u);
+        if (sync) {
+            uint8_t isa = (uint8_t)((s[i] >> 1) & 1u);
+            if (isaBitsLen < sizeof(isaBits)) {
+                isaBits[isaBitsLen++] = isa;
+            }
+        }
+    }
 
-    for (uint16_t i = 1; i <= N; i++) {
+    /* ---------------- Find best decode hypothesis ----------------
+       We try:
+         - bit order: LSB-first or MSB-first
+         - per-byte framing: pre dummy clocks, 8 data clocks, post dummy clocks
+         - resulting step = pre + 8 + post
+       From ROM: pre=2, post=2, step=12 is a *very* likely winner.
+    */
+    uint8_t bestOff = 0u;
+    uint8_t bestMSB = 0u;
+    uint8_t bestScore = 0u;
+    uint8_t bestPre = 0u, bestPost = 0u, bestStep = 0u;
 
-        uint8_t sync = runSync;
-        if (i < N) sync = (uint8_t)((s[i] >> 2) & 1u);
+    for (uint8_t pre = 0u; pre <= 4u; pre++) {
+        for (uint8_t post = 0u; post <= 4u; post++) {
 
-        /* end of run? */
-        if ((i == N) || (sync != runSync)) {
+            uint8_t step = (uint8_t)(pre + 8u + post);
+            if (step < 8u) continue;
 
-            uint16_t runEnd = i; /* [runStart, runEnd) */
-            uint16_t runLen = (runEnd > runStart) ? (runEnd - runStart) : 0u;
+            /* try offsets within one step */
+            for (uint8_t off = 0u; off < step; off++) {
 
-            if (runLen >= 8u) {
+                for (uint8_t msb = 0u; msb < 2u; msb++) {
 
-                /* ---------------- SYNC HIGH: find opcode bytes inside ISA bits ---------------- */
-                if (runSync == 1u) {
+                    uint8_t score = 0u;
 
-                    /* extract ISA bits from this run */
-                    static uint8_t bits[256];
-                    uint16_t bitsLen = 0;
-                    for (uint16_t k = runStart; k < runEnd; k++) {
-                        uint8_t isa = (uint8_t)((s[k] >> 1) & 1u);
-                        if (bitsLen < sizeof(bits)) bits[bitsLen++] = isa;
-                    }
+                    /* decode a bunch of bytes */
+                    uint16_t k = off;
 
-                    /* search all 8-bit windows for known opcodes */
-                    uint8_t bestLocalScore = 0u;
-                    uint8_t bestLocalMSB = 0u;
-                    uint16_t bestLocalPos = 0u;
-                    uint8_t bestLocalByte = 0u;
+                    while ((k + pre + 7u) < isaBitsLen) {
 
-                    for (uint16_t pos = 0; (pos + 7u) < bitsLen; pos++) {
-                        uint8_t b_lsb = assemble8_lsb(bits, pos);
-                        uint8_t b_msb = assemble8_msb(bits, pos);
+                        uint16_t base = (uint16_t)(k + pre);
+                        uint8_t b = 0u;
 
-                        if (is_known_opcode(b_lsb)) {
-                            bestLocalScore = 2u;
-                            bestLocalMSB = 0u;
-                            bestLocalPos = pos;
-                            bestLocalByte = b_lsb;
-                            break; /* good enough */
-                        }
-                        if (is_known_opcode(b_msb) && (bestLocalScore == 0u)) {
-                            bestLocalScore = 1u;
-                            bestLocalMSB = 1u;
-                            bestLocalPos = pos;
-                            bestLocalByte = b_msb;
-                        }
-                    }
-
-                    disp3478_bestScore = bestLocalScore;
-                    disp3478_bestMSB = bestLocalMSB;
-
-                    if (bestLocalScore) {
-
-                        /* record opcode */
-                        if (disp3478_isa_list_len < sizeof(disp3478_isa_list)) {
-                            disp3478_isa_list[disp3478_isa_list_len++] = bestLocalByte;
-                        }
-                        disp3478_opcode_hits++;
-
-                        if (bestLocalByte == 0x1Au) { pending_hi = 1u; pending_lo = 0u; disp3478_saw_1A = 1u; }
-                        if (bestLocalByte == 0x0Au) { pending_lo = 1u; pending_hi = 0u; disp3478_saw_0A = 1u; }
-                    }
-                }
-
-                /* ---------------- SYNC LOW: if pending 0x1A/0x0A, decode 12 nibbles ---------------- */
-                else {
-
-                    if (pending_hi || pending_lo) {
-
-                        /* extract INA bits from this run */
-                        static uint8_t bits[512];
-                        uint16_t bitsLen = 0;
-                        for (uint16_t k = runStart; k < runEnd; k++) {
-                            uint8_t ina = (uint8_t)(s[k] & 1u);
-                            if (bitsLen < sizeof(bits)) bits[bitsLen++] = ina;
-                        }
-
-                        /* Find best 48-bit window (12 nibbles) */
-                        uint16_t bestPos = 0;
-                        uint8_t bestScore = 0;
-
-                        if (bitsLen >= 48u) {
-                            for (uint16_t pos = 0; (pos + 47u) < bitsLen; pos++) {
-
-                                uint8_t score = 0u;
-                                for (uint8_t n = 0; n < 12u; n++) {
-                                    uint16_t base = (uint16_t)(pos + (uint16_t)n * 4u);
-                                    uint8_t nib = assemble4_lsb(bits, base);
-                                    if (nib != 0u) score++;
-                                }
-
-                                if (score > bestScore) {
-                                    bestScore = score;
-                                    bestPos = pos;
-                                    if (score >= 8u) break; /* early stop */
-                                }
+                        if (msb == 0u) {
+                            /* LSB-first */
+                            for (uint8_t j = 0u; j < 8u; j++) {
+                                b |= (uint8_t)(isaBits[base + j] << j);
                             }
-
-                            /* commit 12 nibbles */
-                            for (uint8_t n = 0; n < 12u; n++) {
-                                uint16_t base = (uint16_t)(bestPos + (uint16_t)n * 4u);
-                                if ((base + 3u) >= bitsLen) break;
-
-                                uint8_t nib = assemble4_lsb(bits, base);
-
-                                if (pending_hi) disp3478_hi[n] = nib;
-                                if (pending_lo) disp3478_lo[n] = nib;
+                        }
+                        else {
+                            /* MSB-first */
+                            for (uint8_t j = 0u; j < 8u; j++) {
+                                b = (uint8_t)((b << 1) | (isaBits[base + j] & 1u));
                             }
                         }
 
-                        pending_hi = 0u;
-                        pending_lo = 0u;
+                        if (is_known_opcode(b)) score++;
+
+                        k = (uint16_t)(k + step);
+                        if (score >= 12u) break; /* early exit */
+                    }
+
+                    if (score > bestScore) {
+                        bestScore = score;
+                        bestOff = off;
+                        bestMSB = msb;
+                        bestPre = pre;
+                        bestPost = post;
+                        bestStep = step;
                     }
                 }
             }
-
-            /* next run */
-            runStart = i;
-            runSync = (i < N) ? (uint8_t)((s[i] >> 2) & 1u) : runSync;
         }
     }
 
-    /* zero remainder of isa_list */
-    for (uint8_t i = disp3478_isa_list_len; i < sizeof(disp3478_isa_list); i++) {
-        disp3478_isa_list[i] = 0u;
-    }
+    disp3478_bestOff = bestOff;
+    disp3478_bestMSB = bestMSB;
+    disp3478_bestScore = bestScore;
+    disp3478_bestPre = bestPre;
+    disp3478_bestPost = bestPost;
+    disp3478_bestStep = bestStep;
 
-    /* combine if both halves non-trivial (don’t insist all 12 nonzero yet) */
-    uint8_t hi_nonzero = 0u, lo_nonzero = 0u;
-    for (uint8_t i = 0; i < 12u; i++) {
-        if (disp3478_hi[i] != 0u) hi_nonzero = 1u;
-        if (disp3478_lo[i] != 0u) lo_nonzero = 1u;
-    }
+    /* ---------------- Build ISA opcode list using best hypothesis ---------------- */
+    if (isaBitsLen != 0u) {
 
-    if (hi_nonzero && lo_nonzero) {
-        for (uint8_t k = 0; k < 12u; k++) {
-            disp3478_ram[k] = (uint8_t)((disp3478_hi[k] << 4) | (disp3478_lo[k] & 0x0Fu));
+        uint16_t k = bestOff;
+
+        while ((k + bestPre + 7u) < isaBitsLen) {
+
+            uint16_t base = (uint16_t)(k + bestPre);
+            uint8_t b = 0u;
+
+            if (bestMSB == 0u) {
+                for (uint8_t j = 0u; j < 8u; j++) b |= (uint8_t)(isaBits[base + j] << j);
+            }
+            else {
+                for (uint8_t j = 0u; j < 8u; j++) b = (uint8_t)((b << 1) | (isaBits[base + j] & 1u));
+            }
+
+            if (disp3478_isa_list_len < sizeof(disp3478_isa_list)) {
+                disp3478_isa_list[disp3478_isa_list_len++] = b;
+            }
+
+            if (is_known_opcode(b)) disp3478_opcode_hits++;
+            if (b == 0x1Au) disp3478_saw_1A = 1u;
+            if (b == 0x0Au) disp3478_saw_0A = 1u;
+
+            k = (uint16_t)(k + bestStep);
         }
-        disp3478_valid = 1u;
+
+        for (uint8_t i = disp3478_isa_list_len; i < sizeof(disp3478_isa_list); i++) {
+            disp3478_isa_list[i] = 0u;
+        }
     }
+
+    /* NOTE (important):
+       We are NOT yet decoding INA nibbles here because we first need ISA opcodes
+       to decode correctly and consistently. Once you see 0x1A and 0x0A appear
+       in disp3478_isa_list[] on kind=2 frames, we’ll add the INA nibble pull
+       immediately after those opcodes (very likely 12 nibbles each).
+    */
+
+    frameReady = 0u; /* consume capture */
 }
 
 
