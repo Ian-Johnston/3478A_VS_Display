@@ -248,8 +248,8 @@ volatile uint8_t disp3478_diffSeg4_first;
 volatile uint8_t disp3478_diffSeg4_count;
 volatile uint8_t disp3478_diffSeg4_xor[32];
 
-volatile uint8_t  frameLatchModeStatic = 0;   // 1 = latch next PWO even if only 1 SYNC
-volatile uint16_t frameLatchTimeout = 0;      // counts O2 samples since arming
+volatile uint8_t  frameLatchModeStatic = 0;   /* set to 1 in Live Watch to latch the next PWO (static or change) */
+
 
 
 
@@ -319,14 +319,17 @@ void DMM_HandleO2Clock(void)
     uint8_t pwoNow = (HAL_GPIO_ReadPin(DMM_PWO_GPIO_Port, DMM_PWO_Pin) == GPIO_PIN_SET) ? 1u : 0u;
 
     /* ---------------- PWO FALLING EDGE = END OF FRAME ---------------- */
-    if ((prevPwo == 1u) && (pwoNow == 0u)) {
-
-        /* Decide frame kind ONLY here (no flicker) */
+    if ((prevPwo == 1u) && (pwoNow == 0u))
+    {
+        /* Decide frame kind ONLY here */
         uint8_t frameKindNow = (syncRiseInPwo >= 2u) ? 2u : 1u;
 
-        /* Latch only if armed, not already holding, and it's a kind-2 frame */
-        if ((frameLatchEnable == 1u) && (frameHold == 0u) && (frameKindNow == 2u)) {
-
+        /* Latch rules:
+           - frameLatchEnable: latch ONLY digit-change frames (kind==2) (existing behaviour)
+           - frameLatchModeStatic: latch NEXT PWO regardless of kind (new behaviour)
+        */
+        if ((frameHold == 0u) && ((frameLatchEnable == 1u && frameKindNow == 2u) || (frameLatchModeStatic == 1u)))
+        {
             /* Copy lengths (clamp) */
             frameIsaLatchedLen = frameIsaLen;
             if (frameIsaLatchedLen > (uint16_t)sizeof(frameIsaLatched)) frameIsaLatchedLen = sizeof(frameIsaLatched);
@@ -353,7 +356,13 @@ void DMM_HandleO2Clock(void)
             frameHold = 1u;
             frameReady = 1u;          /* one-shot pulse (decoder consumes it) */
             frameReadySticky = 1u;    /* sticky: stays 1 so you can SEE a capture happened */
-            frameLatchEnable = 0u;
+
+            /* Disarm whichever mode was used */
+            if (frameLatchEnable == 1u && frameKindNow == 2u)
+                frameLatchEnable = 0u;
+
+            if (frameLatchModeStatic == 1u)
+                frameLatchModeStatic = 0u;
         }
 
         /* Reset per-frame counters/buffers for next frame */
