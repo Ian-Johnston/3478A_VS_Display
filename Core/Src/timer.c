@@ -153,6 +153,7 @@ volatile uint8_t  frameO2Latched[512];
 #define DISP3478_CAP_DATA_MAX   (512u)
 #define DISP3478_CAP_HDR        (12u)
 #define DISP3478_CAP_MAX        (DISP3478_CAP_HDR + DISP3478_CAP_DATA_MAX)
+
 volatile uint8_t  disp3478_cap[520];     /* 8-byte header + 512 payload */
 volatile uint16_t disp3478_capLen = 0u;  /* valid bytes in disp3478_cap */
 volatile uint8_t  disp3478_capSeq = 0u;  /* increments each capture */
@@ -301,6 +302,10 @@ volatile uint8_t disp3478_winXor[16];
 volatile uint8_t disp3478_textLen = 0;
 volatile char    disp3478_text[200];
 
+/* INA byte view (packed from disp3478_inaNib[][]) */
+volatile uint8_t disp3478_inaByteCount[8];
+volatile uint8_t disp3478_inaBytesHL[8][32];   /* byte = (hiNib<<4) | loNib */
+volatile uint8_t disp3478_inaBytesLH[8][32];   /* byte = (loNib<<4) | hiNib */
 
 
 
