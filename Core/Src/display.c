@@ -24,6 +24,7 @@ uint32_t MainColourFore = 0xFFFFFF;			// White FFFFFF
 uint32_t AnnunColourFore = 0x00FF00;		// Green 00FF00
 uint32_t BackgroundColour = 0x000000;		// Black 000000
 uint32_t SplashIanJColourFore = 0xFFFF00;	// Yellow FFFF00
+uint32_t TriggerColourFore = 0xFF0000;	    // Yellow FFFF00
 extern volatile uint8_t dpFarRight;
 
 
@@ -180,7 +181,7 @@ void FixUnitText(char* text1)
 
 void DisplayTrigger(void)
 {
-	SetTextColors(MainColourFore, BackgroundColour); // Foreground, Background
+	SetTextColors(TriggerColourFore, BackgroundColour); // Foreground, Background
 	ConfigureFontAndPosition(
 		0b00,    // Internal CGROM
 		0b10,    // Font size
@@ -366,7 +367,7 @@ void DisplaySplash() {
 	}
 
 	// Diamond
-	SetTextColors(MainColourFore, BackgroundColour); // Foreground, Background
+	SetTextColors(TriggerColourFore, BackgroundColour); // Foreground, Background
 	ConfigureFontAndPosition(
 		0b00,    // Internal CGROM
 		0b10,    // Font size
