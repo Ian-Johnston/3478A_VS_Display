@@ -634,7 +634,7 @@ static void Process3478Run(const uint8_t* s,
 
             for (uint16_t n = 0; n < nibs; n++)
             {
-                uint8_t v = 0u;
+                uint8_t v = 0;
                 for (uint8_t k = 0u; k < 4u; k++)
                 {
                     uint16_t bi = (uint16_t)(runStart + off + (n * 4u) + k);
@@ -668,7 +668,7 @@ static void Process3478Run(const uint8_t* s,
 
     for (uint16_t n = 0; n < nibs; n++)
     {
-        uint8_t v = 0u;
+        uint8_t v = 0;
         for (uint8_t k = 0u; k < 4u; k++)
         {
             uint16_t bi = (uint16_t)(runStart + bestOff + (n * 4u) + k);
@@ -679,8 +679,33 @@ static void Process3478Run(const uint8_t* s,
         disp3478_inaNib[seg][n] = (uint8_t)(v & 0xFu);
     }
 
+    /* ---- NEW: Pack nibbles into bytes (HL and LH) ---- */
+    {
+        uint8_t bc = (uint8_t)(nibs / 2u);
+        if (bc > 32u) bc = 32u;
+
+        disp3478_inaByteCount[seg] = bc;
+
+        for (uint8_t i = 0u; i < 32u; i++)
+        {
+            if (i < bc)
+            {
+                uint8_t hi = (uint8_t)(disp3478_inaNib[seg][(uint8_t)(2u * i + 0u)] & 0x0Fu);
+                uint8_t lo = (uint8_t)(disp3478_inaNib[seg][(uint8_t)(2u * i + 1u)] & 0x0Fu);
+
+                disp3478_inaBytesHL[seg][i] = (uint8_t)((hi << 4) | lo);
+                disp3478_inaBytesLH[seg][i] = (uint8_t)((lo << 4) | hi);
+            }
+            else
+            {
+                disp3478_inaBytesHL[seg][i] = 0u;
+                disp3478_inaBytesLH[seg][i] = 0u;
+            }
+        }
+    }
+
     /* ---- Histogram (kept for debug) ---- */
-    for (uint8_t b = 0u; b < 16u; b++) disp3478_inaHist[seg][b] = 0u;
+    for (uint8_t b = 0; b < 16u; b++) disp3478_inaHist[seg][b] = 0;
 
     for (uint16_t n = 0; n < nibs; n++)
     {
@@ -700,10 +725,10 @@ static void Process3478Run(const uint8_t* s,
     }
 
     /* ---- Counts + nontrivial list ---- */
-    disp3478_inaNontrivCount[seg] = 0u;
-    disp3478_inaCountF[seg] = 0u;
-    disp3478_inaCount0[seg] = 0u;
-    disp3478_inaCountOther[seg] = 0u;
+    disp3478_inaNontrivCount[seg] = 0;
+    disp3478_inaCountF[seg] = 0;
+    disp3478_inaCount0[seg] = 0;
+    disp3478_inaCountOther[seg] = 0;
 
     for (uint16_t n = 0; n < nibs; n++)
     {
@@ -725,7 +750,7 @@ static void Process3478Run(const uint8_t* s,
     }
 
     for (uint8_t k = disp3478_inaNontrivCount[seg]; k < 32u; k++)
-        disp3478_inaNontriv[seg][k] = 0u;
+        disp3478_inaNontriv[seg][k] = 0;
 
     /* ---- Strip candidate separator nibble X (instead of “mode”) ----
        Always strip 0 and F, optionally strip one extra nibble from candidates. */
@@ -737,7 +762,7 @@ static void Process3478Run(const uint8_t* s,
         uint8_t bestLen = 0u;
         uint8_t bestTmp[32];
 
-        for (uint8_t ci = 0u; ci < 6u; ci++)
+        for (uint8_t ci = 0; ci < 6u; ci++)
         {
             uint8_t X = cand[ci];
             uint8_t tmp[32];
@@ -790,14 +815,9 @@ static void Process3478Run(const uint8_t* s,
         disp3478_inaStripScore[seg] = bestStripScore;
         disp3478_inaStripCount[seg] = bestLen;
         for (uint8_t i = 0u; i < 32u; i++) disp3478_inaStripped[seg][i] = bestTmp[i];
-
-        /* ---- NEW: phase-normalize seg4 stripped list ---- */
-        if (seg == 4u)
-        {
-            Normalize3478_Seg4Strip(disp3478_inaStripped[4], disp3478_inaStripCount[4]);
-        }
     }
 }
+
 
 
 static void Disp3478_BuildCap(const uint8_t* s, uint16_t N, uint8_t kind)
@@ -835,14 +855,6 @@ void Decode3478_LatchedFrame(void)
     const uint8_t* s = frameO2Latched;
     uint16_t N = frameO2LatchedLen;
     if (N > 512u) N = 512u;
-
-    /* Always rebuild capture blob on every latched frame */
-#ifdef frameKindLatched
-    Disp3478_BuildCap(s, N, (uint8_t)frameKindLatched);
-#else
-    Disp3478_BuildCap(s, N, 0u);
-#endif
-
 
     disp3478_frameN = N;
 
@@ -1091,11 +1103,13 @@ void Decode3478_LatchedFrame(void)
     disp3478_segLenFlat3 = (disp3478_segCount > 3u) ? disp3478_segLen[3] : 0;
     disp3478_segLenFlat4 = (disp3478_segCount > 4u) ? disp3478_segLen[4] : 0;
 
-    /* NEW: build LiveWatch text string */
+    /* build LiveWatch text string */
     Build3478Text();
 
+    /* build the single-variable capture blob ONCE per latched frame */
     Build3478Cap(s, N);
 }
+
 
 
 
