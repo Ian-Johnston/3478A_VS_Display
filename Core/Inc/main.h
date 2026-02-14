@@ -41,7 +41,7 @@ extern volatile uint8_t syncState; // Holds the SYNC pin state
 #define SPI_CS_PIN         GPIO_PIN_4       // CS = PA4
 #define SPI_CS_PORT        GPIOA
 
-// 3457A Pin Definitions
+// 3478A Pin Definitions
 #define DMM_SYNC_Pin GPIO_PIN_11				// PB11
 #define DMM_SYNC_GPIO_Port GPIOB
 #define DMM_SYNC_EXTI_IRQn EXTI15_10_IRQn		// This signal initiates read of data

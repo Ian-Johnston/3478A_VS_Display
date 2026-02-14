@@ -31,11 +31,12 @@ void FixUnitText(char* text1);
 
 
 // Display coords
-#define Xpos_MAIN				15			// These are actually the Y position because LCD is rotated 90deg in use. Values in pixels.
+#define Xpos_MAIN				25			// These are actually the Y position because LCD is rotated 90deg in use. Values in pixels.
 #define Ypos_MAIN				0			// start at far left
-#define Xpos_ANNUNC				175
+#define Xpos_ANNUNC				165
 #define Xpos_SPLASH				142
 #define Ypos_SPLASH				220
-
+#define Xpos_TRIGGER			150
+#define Ypos_TRIGGER			910
 
 #endif // DISPLAY_H

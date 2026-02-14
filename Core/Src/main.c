@@ -20,7 +20,7 @@
   * 9           B15               INA
   * 15          B14               ISA
   * 12          B11               SYNC
-  * 6           B1                02
+  * 6           B1                01
   * 2           B12               PW0
   * 5           not connected
   * 20                            +5V
@@ -195,7 +195,7 @@ int main(void) {
 	//DrawLine(119, 0, 119, 959, 0xFF, 0xFF, 0xFF);	// centred on R6243 horizontally
 
 	__HAL_GPIO_EXTI_CLEAR_IT(DMM_SYNC_Pin);			// Clear any pending interrupt flag for SYNC (PB11)
-	//HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);			// Ready to accept 3457A inputs
+	//HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);			// Ready to accept 3478A inputs
 
 
 	//**************************************************************************************************
@@ -211,16 +211,17 @@ int main(void) {
 
 		HAL_GPIO_TogglePin(GPIOC, TEST_OUT_Pin); // Test LED toggle
 
-		//DisplayMain();
+		DisplayMain();
 
-		//HAL_Delay(10);
+		HAL_Delay(10);
 
-		//DisplayAnnunciators();
+		DisplayAnnunciators();
 
-		//HAL_Delay(10);
+		HAL_Delay(10);
 
-		// 3478A capture
-		Decode3478_LatchedFrame();
+		DisplayTrigger();
+
+		HAL_Delay(10);
 
 	}
 

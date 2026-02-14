@@ -1,4 +1,4 @@
-/**
+﻿/**
   ******************************************************************************
   * @file    display.c
   * @brief   This file provides code for the
@@ -24,6 +24,8 @@ uint32_t MainColourFore = 0xFFFFFF;			// White FFFFFF
 uint32_t AnnunColourFore = 0x00FF00;		// Green 00FF00
 uint32_t BackgroundColour = 0x000000;		// Black 000000
 uint32_t SplashIanJColourFore = 0xFFFF00;	// Yellow FFFF00
+extern volatile uint8_t dpFarRight;
+
 
 
 //************************************************************************************************************************************************************
@@ -64,12 +66,37 @@ void DisplayMain(void)
 
 	FixUnitText(text1);			// Fix units
 
-	// Test
-	//memcpy(text1, "12345678901234", 14);
-	//text1[14] = '\0';
+	FixRandomStrings(text1);
 
 	DrawText(text1);
 }
+
+
+void FixRandomStrings(char* text1)
+{
+	int i;   // <-- ADD THIS
+
+	// Only perform S->5 replacement if this is NOT the SELF TEST message
+	if (strstr(text1, "5ELF TE5T") == NULL) {
+		for (i = 0; i < 9; i++) {   // numeric field only
+			if (text1[i] == 'S') {
+				text1[i] = '5';
+			}
+		}
+	}
+
+	// Fix random text anomalies
+	if (strstr(text1, ":,:,:,:,:,:,:") != NULL) {
+		strcpy(text1, "##############");
+		return;
+	}
+
+	if (strstr(text1, "5ELF TE5T") != NULL) {
+		strcpy(text1, "SELF TEST OK");
+		return;
+	}
+}
+
 
 
 // Shift chars right - We have more space on the TFT so can afford to do this
@@ -106,6 +133,7 @@ void ShiftUnitsRight(char* text1)
 }
 
 
+
 // Replace characters
 // Enter the before & after of the 4 chat text to be replaced
 void FixUnitText(char* text1)
@@ -127,7 +155,9 @@ void FixUnitText(char* text1)
 		{ "MOHM", "Mohm" },
 		{ "MAAC", "mAAC" },
 		{ "MADC", "mADC" },
-		{ "UADC", "\xB5""ADC" }   // �ADC (0xB5 in ISO-8859-1)
+		{ "ADR5", "ADRS" },
+		{ "MADC", "mADC" },
+		{ "UADC", "\xB5""ADC" }   // µADC (0xB5 in ISO-8859-1)
 	};
 
 	for (int i = 0; text1[i + 3] != '\0'; i++) {
@@ -148,6 +178,37 @@ void FixUnitText(char* text1)
 }
 
 
+void DisplayTrigger(void)
+{
+	SetTextColors(MainColourFore, BackgroundColour); // Foreground, Background
+	ConfigureFontAndPosition(
+		0b00,    // Internal CGROM
+		0b10,    // Font size
+		0b00,    // ISO 8859-1
+		0,       // Full alignment enabled
+		0,       // Chroma keying disabled
+		1,       // Rotate 90 degrees counterclockwise
+		0b01,    // Width multiplier
+		0b01,    // Height multiplier
+		1,       // Line spacing
+		4,       // Character spacing
+		Xpos_TRIGGER,     // Cursor X
+		Ypos_TRIGGER      // Cursor Y
+	);
+
+	if (dpFarRight == 1) {
+		char sym[2];
+		sym[0] = 0x04;   // H0,L4 - diamond
+		sym[1] = '\0';
+		DrawText(sym);
+	}
+	else {
+		DrawText(" ");
+	}
+
+}
+
+
 void DisplayAnnunciators() {
 
 	// ANNUNCIATORS - Print or clear text on the LCD
@@ -159,17 +220,17 @@ void DisplayAnnunciators() {
 	// Set Y-position of the annunciators
 	int AnnuncYCoords[12] = {
 		10,   // SRQ
-		87,   // LSTN
-		164,  // TLK
-		241,  // RMT
-		318,  // MATH
-		395,  // AZOFF
-		472,  // 2ohm
-		549,  // 4ohm
-		626,  // MRNG
-		703,  // STRG
-		780,  // CAL
-		860   // SHIFT
+		77,   // LSTN
+		157,  // TLK
+		220,  // RMT
+		285,  // MATH
+		365,  // AZOFF
+		454,  // 2ohm
+		532,  // 4ohm
+		616,  // MRNG
+		693,  // STRG
+		770,  // CAL
+		830   // SHIFT
 	};
 
 
@@ -263,24 +324,23 @@ void DisplaySplash() {
 
 	// Annunciators
 	const char* AnnuncNames[12] = {
-		"SMPL", "REM", "SRQ", "ADRS", "AC+DC", "4Wohm",
-		"AZOFF", "MRNG", "MATH", "REAR", "ERR", "SHIFT"
+       "SRQ", "LSTN", "TLK", "RMT", "MATH", "AZOFF", "2ohm", "4ohm", "MRNG", "STRG", "CAL", "SHIFT"
 	};
 
 	// Set Y-position of the annunciators
 	int AnnuncYCoords[12] = {
-		10,   // SMPL
-		87,   // REM
-		151,  // SRQ
-		212,  // ADRS
-		289,  // AC+DC
-		382,  // 4Wohm
-		477,  // AZOFF
-		571,  // MRNG
-		649,  // MATH
-		726,  // REAR
-		803,  // ERR
-		860   // SHIFT
+		10,   // SRQ
+		77,   // LSTN
+		157,  // TLK
+		220,  // RMT
+		285,  // MATH
+		365,  // AZOFF
+		454,  // 2ohm
+		532,  // 4ohm
+		616,  // MRNG
+		693,  // STRG
+		770,  // CAL
+		830   // SHIFT
 	};
 
 	for (int i = 0; i < 12; i++) {
@@ -304,5 +364,27 @@ void DisplaySplash() {
 		DrawText(AnnuncNames[i]);
 		HAL_Delay(10);
 	}
+
+	// Diamond
+	SetTextColors(MainColourFore, BackgroundColour); // Foreground, Background
+	ConfigureFontAndPosition(
+		0b00,    // Internal CGROM
+		0b10,    // Font size
+		0b00,    // ISO 8859-1
+		0,       // Full alignment enabled
+		0,       // Chroma keying disabled
+		1,       // Rotate 90 degrees counterclockwise
+		0b01,    // Width multiplier
+		0b01,    // Height multiplier
+		1,       // Line spacing
+		4,       // Character spacing
+		Xpos_TRIGGER,     // Cursor X
+		Ypos_TRIGGER      // Cursor Y
+	);
+
+	char sym[2];
+	sym[0] = 0x04;   // H0,L4 - diamond
+	sym[1] = '\0';
+	DrawText(sym);
 
 }
