@@ -73,30 +73,45 @@ void DisplayMain(void)
 }
 
 
+// Fix random strings and text anomolies
 void FixRandomStrings(char* text1)
 {
-	int i;   // <-- ADD THIS
+	int i;
+	static char prevText1[15] = "              ";  // 14 spaces + '\0'
+	int reject = 0;
 
-	// Only perform S->5 replacement if this is NOT the SELF TEST message
-	if (strstr(text1, "5ELF TE5T") == NULL) {
-		for (i = 0; i < 9; i++) {   // numeric field only
-			if (text1[i] == 'S') {
-				text1[i] = '5';
+	// Reject any string containing '?'
+	if (strchr(text1, '?') != NULL) {
+		strcpy(text1, prevText1);
+		reject = 1;
+	}
+
+	if (!reject) {
+
+		// Only perform S->5 replacement if this is NOT the SELF TEST message
+		if (strstr(text1, "5ELF TE5T") == NULL) {
+			for (i = 0; i < 9; i++) {
+				if (text1[i] == 'S') {
+					text1[i] = '5';
+				}
 			}
 		}
+
+		// Fix random text anomalies
+		if (strstr(text1, ":,:,:,:,:,:,:") != NULL) {
+			strcpy(text1, "##############");
+		}
+		else if (strstr(text1, "5ELF TE5T") != NULL) {
+			strcpy(text1, "SELF TEST OK");
+		}
+
+		// Save as last good string
+		strcpy(prevText1, text1);
 	}
 
-	// Fix random text anomalies
-	if (strstr(text1, ":,:,:,:,:,:,:") != NULL) {
-		strcpy(text1, "##############");
-		return;
-	}
-
-	if (strstr(text1, "5ELF TE5T") != NULL) {
-		strcpy(text1, "SELF TEST OK");
-		return;
-	}
+	return;
 }
+
 
 
 
