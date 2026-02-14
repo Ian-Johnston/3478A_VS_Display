@@ -149,6 +149,15 @@ volatile uint8_t disp3478_isa_list[16];
 volatile uint8_t disp3478_isa_list_len;
 
 volatile uint8_t  frameO2Latched[512];
+
+#define DISP3478_CAP_DATA_MAX   (512u)
+#define DISP3478_CAP_HDR        (12u)
+#define DISP3478_CAP_MAX        (DISP3478_CAP_HDR + DISP3478_CAP_DATA_MAX)
+volatile uint8_t  disp3478_cap[520];     /* 8-byte header + 512 payload */
+volatile uint16_t disp3478_capLen = 0u;  /* valid bytes in disp3478_cap */
+volatile uint8_t  disp3478_capSeq = 0u;  /* increments each capture */
+
+
 volatile uint8_t frameO2[512];
 volatile uint8_t frameReadySticky = 0;
 
@@ -291,6 +300,11 @@ volatile uint8_t disp3478_winXor[16];
 
 volatile uint8_t disp3478_textLen = 0;
 volatile char    disp3478_text[200];
+
+
+
+
+
 
 
 
@@ -781,6 +795,30 @@ static void Process3478Run(const uint8_t* s,
 }
 
 
+static void Disp3478_BuildCap(const uint8_t* s, uint16_t N, uint8_t kind)
+{
+    if (N > 512u) N = 512u;
+
+    /* header: "3478C" + seq + kind + lenLSB */
+    disp3478_cap[0] = '3';
+    disp3478_cap[1] = '4';
+    disp3478_cap[2] = '7';
+    disp3478_cap[3] = '8';
+    disp3478_cap[4] = 'C';
+    disp3478_cap[5] = disp3478_capSeq++;     /* increments every capture */
+    disp3478_cap[6] = kind;
+    disp3478_cap[7] = (uint8_t)(N & 0xFFu);  /* (optional; header is mainly for sanity) */
+
+    /* payload: always overwrite 512 so no stale tail */
+    for (uint16_t i = 0u; i < 512u; i++)
+        disp3478_cap[8u + i] = (i < N) ? s[i] : 0u;
+
+    /* report the full blob size (header + payload) */
+    disp3478_capLen = (uint16_t)(8u + 512u);
+}
+
+
+
 
 void Decode3478_LatchedFrame(void)
 {
@@ -792,6 +830,14 @@ void Decode3478_LatchedFrame(void)
     const uint8_t* s = frameO2Latched;
     uint16_t N = frameO2LatchedLen;
     if (N > 512u) N = 512u;
+
+    /* Always rebuild capture blob on every latched frame */
+#ifdef frameKindLatched
+    Disp3478_BuildCap(s, N, (uint8_t)frameKindLatched);
+#else
+    Disp3478_BuildCap(s, N, 0u);
+#endif
+
 
     disp3478_frameN = N;
 
@@ -1042,7 +1088,57 @@ void Decode3478_LatchedFrame(void)
 
     /* NEW: build LiveWatch text string */
     Build3478Text();
+
+    Build3478Cap(s, N);
 }
+
+
+
+static uint16_t CapPut8(uint8_t* dst, uint16_t pos, uint16_t max, uint8_t v)
+{
+    if (pos < max) dst[pos] = v;
+    return (uint16_t)(pos + 1u);
+}
+
+static uint16_t CapPut16LE(uint8_t* dst, uint16_t pos, uint16_t max, uint16_t v)
+{
+    pos = CapPut8(dst, pos, max, (uint8_t)(v & 0xFFu));
+    pos = CapPut8(dst, pos, max, (uint8_t)((v >> 8) & 0xFFu));
+    return pos;
+}
+
+/* Build single-variable capture blob for Live Watch */
+void Build3478Cap(const uint8_t* s, uint16_t N)
+{
+    disp3478_capLen = 0u;
+
+    /* header (12 bytes) */
+    disp3478_cap[0] = '3';
+    disp3478_cap[1] = '4';
+    disp3478_cap[2] = '7';
+    disp3478_cap[3] = '8';
+    disp3478_cap[4] = 'C';
+    disp3478_cap[5] = disp3478_capSeq++;      /* SEQ (increments every capture) */
+    disp3478_cap[6] = frameKindLatched;       /* kind */
+    disp3478_cap[7] = 0u;                     /* reserved */
+    disp3478_cap[8] = (uint8_t)(N & 0xFFu);   /* N LSB */
+    disp3478_cap[9] = (uint8_t)(N >> 8);      /* N MSB */
+    disp3478_cap[10] = 0u;                     /* reserved */
+    disp3478_cap[11] = 0u;                     /* reserved */
+
+    uint16_t take = N;
+    if (take > DISP3478_CAP_DATA_MAX) take = DISP3478_CAP_DATA_MAX;
+
+    for (uint16_t i = 0u; i < take; i++)
+        disp3478_cap[DISP3478_CAP_HDR + i] = s[i];
+
+    for (uint16_t i = take; i < DISP3478_CAP_DATA_MAX; i++)
+        disp3478_cap[DISP3478_CAP_HDR + i] = 0u;
+
+    disp3478_capLen = (uint16_t)(DISP3478_CAP_HDR + take);
+}
+
+
 
 
 
