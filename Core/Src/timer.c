@@ -276,6 +276,24 @@ volatile uint8_t disp3478_diffChgSeg4_xor[32];
 volatile uint8_t disp3478_dbgDiffPrev4[32];
 volatile uint8_t disp3478_dbgDiffCurr4[32];
 
+volatile uint8_t disp3478_prevStrip4Count = 0;
+volatile uint8_t disp3478_prevStrip4[32];
+volatile uint8_t disp3478_havePrevStrip4 = 0;
+
+volatile uint8_t disp3478_bestRot4 = 0;      // debug: chosen rotation
+volatile uint8_t disp3478_bestRot4Score = 0; // debug: match score
+
+volatile uint8_t disp3478_winStart = 0;
+volatile uint8_t disp3478_winLen = 0;
+volatile uint8_t disp3478_winPrev[16];
+volatile uint8_t disp3478_winCurr[16];
+volatile uint8_t disp3478_winXor[16];
+
+volatile uint8_t disp3478_textLen = 0;
+volatile char    disp3478_text[200];
+
+
+
 //*****************************************************************************************
 
 
@@ -470,6 +488,100 @@ static uint8_t is_known_opcode(uint8_t b)
 
 
 
+static void CaptureSeg4Window(const uint8_t* prev4,
+    const uint8_t* curr4,
+    const uint8_t* xor4,
+    uint8_t first,
+    uint8_t count)
+{
+    /* pick a 16-nibble window centered on the change */
+    if (first == 0xFFu || count == 0u)
+    {
+        disp3478_winStart = 0u;
+        disp3478_winLen = 0u;
+        for (uint8_t i = 0u; i < 16u; i++) {
+            disp3478_winPrev[i] = 0u;
+            disp3478_winCurr[i] = 0u;
+            disp3478_winXor[i] = 0u;
+        }
+        return;
+    }
+
+    uint8_t mid = (uint8_t)(first + (count / 2u));
+    uint8_t start = (mid > 7u) ? (uint8_t)(mid - 7u) : 0u;
+
+    /* clamp to 0..(32-16) since your dbg arrays are 32 max */
+    if (start > 16u) start = 16u;
+
+    disp3478_winStart = start;
+    disp3478_winLen = 16u;
+
+    for (uint8_t i = 0u; i < 16u; i++)
+    {
+        uint8_t idx = (uint8_t)(start + i);
+        disp3478_winPrev[i] = prev4[idx];
+        disp3478_winCurr[i] = curr4[idx];
+        disp3478_winXor[i] = xor4[idx];
+    }
+}
+
+
+
+
+static void Normalize3478_Seg4Strip(uint8_t* a, uint8_t n)
+{
+    if (n < 4u || n > 32u) return;
+
+    /* No previous reference yet (or length changed): seed reference */
+    if (disp3478_havePrevStrip4 == 0u || disp3478_prevStrip4Count != n)
+    {
+        disp3478_prevStrip4Count = n;
+        for (uint8_t i = 0u; i < n; i++) disp3478_prevStrip4[i] = a[i];
+        disp3478_havePrevStrip4 = 1u;
+
+        disp3478_bestRot4 = 0u;
+        disp3478_bestRot4Score = 0u;
+        return;
+    }
+
+    /* Try all rotations; pick the one that maximises equality vs previous */
+    uint8_t bestR = 0u;
+    uint8_t bestScore = 0u;
+
+    for (uint8_t r = 0u; r < n; r++)
+    {
+        uint8_t score = 0u;
+        for (uint8_t i = 0u; i < n; i++)
+        {
+            uint8_t v = a[(uint8_t)((i + r) % n)];
+            if (v == disp3478_prevStrip4[i]) score++;
+        }
+
+        if (score > bestScore)
+        {
+            bestScore = score;
+            bestR = r;
+        }
+    }
+
+    /* Apply chosen rotation */
+    uint8_t tmp[32];
+    for (uint8_t i = 0u; i < n; i++)
+        tmp[i] = a[(uint8_t)((i + bestR) % n)];
+    for (uint8_t i = 0u; i < n; i++)
+        a[i] = tmp[i];
+
+    /* Update reference */
+    disp3478_prevStrip4Count = n;
+    for (uint8_t i = 0u; i < n; i++) disp3478_prevStrip4[i] = a[i];
+
+    disp3478_bestRot4 = bestR;
+    disp3478_bestRot4Score = bestScore;
+}
+
+
+
+
 
 
 static void Process3478Run(const uint8_t* s,
@@ -503,7 +615,7 @@ static void Process3478Run(const uint8_t* s,
 
             for (uint16_t n = 0; n < nibs; n++)
             {
-                uint8_t v = 0;
+                uint8_t v = 0u;
                 for (uint8_t k = 0u; k < 4u; k++)
                 {
                     uint16_t bi = (uint16_t)(runStart + off + (n * 4u) + k);
@@ -537,7 +649,7 @@ static void Process3478Run(const uint8_t* s,
 
     for (uint16_t n = 0; n < nibs; n++)
     {
-        uint8_t v = 0;
+        uint8_t v = 0u;
         for (uint8_t k = 0u; k < 4u; k++)
         {
             uint16_t bi = (uint16_t)(runStart + bestOff + (n * 4u) + k);
@@ -549,7 +661,7 @@ static void Process3478Run(const uint8_t* s,
     }
 
     /* ---- Histogram (kept for debug) ---- */
-    for (uint8_t b = 0; b < 16u; b++) disp3478_inaHist[seg][b] = 0;
+    for (uint8_t b = 0u; b < 16u; b++) disp3478_inaHist[seg][b] = 0u;
 
     for (uint16_t n = 0; n < nibs; n++)
     {
@@ -569,10 +681,10 @@ static void Process3478Run(const uint8_t* s,
     }
 
     /* ---- Counts + nontrivial list ---- */
-    disp3478_inaNontrivCount[seg] = 0;
-    disp3478_inaCountF[seg] = 0;
-    disp3478_inaCount0[seg] = 0;
-    disp3478_inaCountOther[seg] = 0;
+    disp3478_inaNontrivCount[seg] = 0u;
+    disp3478_inaCountF[seg] = 0u;
+    disp3478_inaCount0[seg] = 0u;
+    disp3478_inaCountOther[seg] = 0u;
 
     for (uint16_t n = 0; n < nibs; n++)
     {
@@ -594,7 +706,7 @@ static void Process3478Run(const uint8_t* s,
     }
 
     for (uint8_t k = disp3478_inaNontrivCount[seg]; k < 32u; k++)
-        disp3478_inaNontriv[seg][k] = 0;
+        disp3478_inaNontriv[seg][k] = 0u;
 
     /* ---- Strip candidate separator nibble X (instead of “mode”) ----
        Always strip 0 and F, optionally strip one extra nibble from candidates. */
@@ -606,7 +718,7 @@ static void Process3478Run(const uint8_t* s,
         uint8_t bestLen = 0u;
         uint8_t bestTmp[32];
 
-        for (uint8_t ci = 0; ci < 6u; ci++)
+        for (uint8_t ci = 0u; ci < 6u; ci++)
         {
             uint8_t X = cand[ci];
             uint8_t tmp[32];
@@ -659,8 +771,15 @@ static void Process3478Run(const uint8_t* s,
         disp3478_inaStripScore[seg] = bestStripScore;
         disp3478_inaStripCount[seg] = bestLen;
         for (uint8_t i = 0u; i < 32u; i++) disp3478_inaStripped[seg][i] = bestTmp[i];
+
+        /* ---- NEW: phase-normalize seg4 stripped list ---- */
+        if (seg == 4u)
+        {
+            Normalize3478_Seg4Strip(disp3478_inaStripped[4], disp3478_inaStripCount[4]);
+        }
     }
 }
+
 
 
 void Decode3478_LatchedFrame(void)
@@ -725,7 +844,7 @@ void Decode3478_LatchedFrame(void)
     disp3478_diffChgSeg4_count = 0u;
     for (uint8_t i = 0u; i < 32u; i++) disp3478_diffChgSeg4_xor[i] = 0u;
 
-    /* NEW: snapshot of XOR inputs (seg4) */
+    /* snapshot of XOR inputs (seg4) */
     for (uint8_t i = 0u; i < 32u; i++) {
         disp3478_dbgDiffPrev4[i] = 0u;
         disp3478_dbgDiffCurr4[i] = 0u;
@@ -821,7 +940,7 @@ void Decode3478_LatchedFrame(void)
             if (disp3478_havePrevChange == 1u)
             {
                 uint8_t m = disp3478_prevChangeStripCount4;
-                if (m < n) n = m; /* compare only overlap */
+                if (m < n) n = m;
 
                 if (n > 0u)
                 {
@@ -833,8 +952,8 @@ void Decode3478_LatchedFrame(void)
                         uint8_t a = disp3478_prevChangeStripped4[i];
                         uint8_t b = disp3478_changeStripped[4][i];
 
-                        disp3478_dbgDiffPrev4[i] = a; /* snapshot */
-                        disp3478_dbgDiffCurr4[i] = b; /* snapshot */
+                        disp3478_dbgDiffPrev4[i] = a;
+                        disp3478_dbgDiffCurr4[i] = b;
 
                         uint8_t x = (uint8_t)(a ^ b);
                         disp3478_diffChgSeg4_xor[i] = x;
@@ -846,7 +965,6 @@ void Decode3478_LatchedFrame(void)
                         }
                     }
 
-                    /* clear tail so Live Watch doesn't show stale */
                     for (uint8_t i = n; i < 32u; i++) {
                         disp3478_dbgDiffPrev4[i] = 0u;
                         disp3478_dbgDiffCurr4[i] = 0u;
@@ -858,7 +976,6 @@ void Decode3478_LatchedFrame(void)
                 }
             }
 
-            /* update prev-change always */
             disp3478_havePrevChange = 1u;
             disp3478_prevChangeStripCount4 = disp3478_changeStripCount[4];
             for (uint8_t i = 0u; i < 32u; i++)
@@ -922,10 +1039,95 @@ void Decode3478_LatchedFrame(void)
     disp3478_segLenFlat2 = (disp3478_segCount > 2u) ? disp3478_segLen[2] : 0;
     disp3478_segLenFlat3 = (disp3478_segCount > 3u) ? disp3478_segLen[3] : 0;
     disp3478_segLenFlat4 = (disp3478_segCount > 4u) ? disp3478_segLen[4] : 0;
+
+    /* NEW: build LiveWatch text string */
+    Build3478Text();
 }
 
 
 
+
+
+static uint16_t AppendHexNib(char* dst, uint16_t pos, uint16_t max, uint8_t v)
+{
+    static const char hx[16] = "0123456789abcdef";
+    if (pos + 2u >= max) return pos;
+    dst[pos++] = hx[(v >> 4) & 0x0Fu];
+    dst[pos++] = hx[v & 0x0Fu];
+    return pos;
+}
+
+static uint16_t AppendStr(char* dst, uint16_t pos, uint16_t max, const char* s)
+{
+    while (*s != 0)
+    {
+        if (pos + 1u >= max) break;
+        dst[pos++] = *s++;
+    }
+    return pos;
+}
+
+static uint16_t AppendNibList(char* dst, uint16_t pos, uint16_t max,
+    const uint8_t* arr, uint8_t count)
+{
+    for (uint8_t i = 0u; i < count; i++)
+    {
+        if (pos + 2u >= max) break;
+        /* nibble as single hex char */
+        static const char hx[16] = "0123456789abcdef";
+        dst[pos++] = hx[arr[i] & 0x0Fu];
+        if (pos + 1u < max) dst[pos++] = ' ';
+    }
+    return pos;
+}
+
+void Build3478Text(void)
+{
+    /* Build a readable debug string from already-decoded results */
+    uint16_t pos = 0u;
+    uint16_t max = (uint16_t)sizeof(disp3478_text);
+
+    /* prefix: frame kind */
+    pos = AppendStr(disp3478_text, pos, max, "K=");
+    pos = AppendHexNib(disp3478_text, pos, max, (uint8_t)frameKindLatched);
+
+    pos = AppendStr(disp3478_text, pos, max, " N=");
+    pos = AppendHexNib(disp3478_text, pos, max, (uint8_t)((disp3478_frameN >> 8) & 0xFFu));
+    pos = AppendHexNib(disp3478_text, pos, max, (uint8_t)((disp3478_frameN >> 0) & 0xFFu));
+
+    pos = AppendStr(disp3478_text, pos, max, "  ");
+
+    /* ISA10 words (first few) */
+    pos = AppendStr(disp3478_text, pos, max, "ISA10:");
+    for (uint8_t i = 0u; i < disp3478_isa10_len; i++)
+    {
+        uint16_t w = disp3478_isa10_list[i];
+        if (pos + 6u >= max) break;
+        disp3478_text[pos++] = ' ';
+        disp3478_text[pos++] = "0123456789abcdef"[(w >> 12) & 0x0Fu];
+        disp3478_text[pos++] = "0123456789abcdef"[(w >> 8) & 0x0Fu];
+        disp3478_text[pos++] = "0123456789abcdef"[(w >> 4) & 0x0Fu];
+        disp3478_text[pos++] = "0123456789abcdef"[(w >> 0) & 0x0Fu];
+    }
+    pos = AppendStr(disp3478_text, pos, max, "  ");
+
+    /* Dump stripped nibble streams for seg2 and seg4 (these are your most useful right now) */
+    pos = AppendStr(disp3478_text, pos, max, "S2(");
+    pos = AppendHexNib(disp3478_text, pos, max, disp3478_inaStripCount[2]);
+    pos = AppendStr(disp3478_text, pos, max, "): ");
+    pos = AppendNibList(disp3478_text, pos, max, disp3478_inaStripped[2], disp3478_inaStripCount[2]);
+    pos = AppendStr(disp3478_text, pos, max, " | ");
+
+    pos = AppendStr(disp3478_text, pos, max, "S4(");
+    pos = AppendHexNib(disp3478_text, pos, max, disp3478_inaStripCount[4]);
+    pos = AppendStr(disp3478_text, pos, max, "): ");
+    pos = AppendNibList(disp3478_text, pos, max, disp3478_inaStripped[4], disp3478_inaStripCount[4]);
+
+    /* terminate */
+    if (pos >= max) pos = (uint16_t)(max - 1u);
+    disp3478_text[pos] = 0;
+    disp3478_textLen = (uint8_t)((pos > 255u) ? 255u : pos);
+}
 
 
 
