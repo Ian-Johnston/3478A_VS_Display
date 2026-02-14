@@ -1615,6 +1615,7 @@ void HP3457_BuildDisplayString(char out12[13], char punct12[13])
 }
 
 
+
 static uint8_t HP3457_GetCharCode_Alt(uint8_t d)
 {
     uint8_t bi = (12 - d) / 2;
