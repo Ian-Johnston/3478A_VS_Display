@@ -4,7 +4,7 @@
   * @brief          : Main program body
   ******************************************************************************
   *
-  * By Ian Johnston (IanSJohnston on YouTube),
+  * By Ian Johnston (IanScottJohnston on YouTube),
   * for 3.71" 960x240 TFT LCD (ST7701S) and using LT7680 controller adaptor
   * Visual Studio 2022 with VisualGDB plugin:
   * To upload HEX from VS2022 = BUILD then PROGRAM AND START WITHOUT DEBUGGING
@@ -15,12 +15,12 @@
   ******************************************************************************
 
   * Inteface with 3478A:
-  * ====================
+  * ======================================
   * U611 pin    BluePill          Function
   * 9           B15               INA
   * 15          B14               ISA
   * 12          B11               SYNC
-  * 6           B1                01
+  * 3           B1                01		(do not use 02 - Pin 6)
   * 2           B12               PW0
   * 5           not connected
   * 20                            +5V
@@ -42,7 +42,7 @@
 #include <stdint.h>
 #include "lt7680.h"
 #include "timer.h"
-#include <stdbool.h>    // bool support, otherwise use _Bool
+#include <stdbool.h>    // For bool support, otherwise use _Bool
 #include <stdlib.h>
 #include "display.h"
 #include "stm32f1xx_hal.h"
@@ -70,7 +70,6 @@ uint8_t isaState = 0;
 uint8_t inaState = 0;
 
 extern volatile uint8_t logReady;
-
 
 
 //******************************************************************************
@@ -103,7 +102,6 @@ volatile uint8_t Init_Completed_flag = 0;
 
 // Private function prototypes
 void SystemClock_Config(void);
-
 
 
 //******************************************************************************
@@ -146,62 +144,28 @@ int main(void) {
 	// Pull LT7680 RESET pin high immediately after reset
 	HAL_GPIO_WritePin(RESET_PORT, RESET_PIN, GPIO_PIN_SET);   // Release reset high
 
-	HardwareReset();				// Reset LT7680 - Pull LCM_RESET low for 100ms and wait
-
-	HAL_Delay(1000);
+	HardwareReset();				// Reset LT7680 - Pull LCM_RESET low for 10ms and wait
 
 	BuyDisplay_Init();				// Initialize ST7701S BuyDisplay 3.71" driver IC
 
-	HAL_Delay(100);
-
 	SendAllToLT7680_LT();			// run subs to setup LT7680 based on Levetop info
 
-	HAL_Delay(10);
+	ConfigurePWMAndSetBrightness(BACKLIGHT);  // Configure Timer-1 and PWM-1 for backlighting. Settable 0-100%
 
-	// Main loop timer
-	//SetTimerDuration(35);			// 35 ms timed action set.......not used
-	//HAL_Delay(5);
-	//SetBacklightFull();
-	ConfigurePWMAndSetBrightness(BACKLIGHTFULL);  // Configure Timer-1 and PWM-1 for backlighting. Settable 0-100%
+	ClearScreen();
 
-	ClearScreen();					// Again.....
+	RightWipe();
 
-	//TFT_WipeTest();
-	//ClearScreen();					// Again.....
-
-	// Right wipe to clear random pixels down the far right hand side	- Only needed if back porch adjustments can't get rid of edge pixels
-	DrawLine(0, 959, 239, 959, 0x00, 0x00, 0x00);	// far right hand vertical line, black, 1 pixel line. (this line hidden!)
-	DrawLine(0, 958, 239, 958, 0x00, 0x00, 0x00);	// (this line hidden!)
-	DrawLine(0, 957, 239, 957, 0x00, 0x00, 0x00);
-	DrawLine(0, 956, 239, 956, 0x00, 0x00, 0x00);
-	DrawLine(0, 955, 239, 955, 0x00, 0x00, 0x00);
-	DrawLine(0, 954, 239, 954, 0x00, 0x00, 0x00);
-	DrawLine(0, 953, 239, 953, 0x00, 0x00, 0x00);
-	DrawLine(0, 952, 239, 952, 0x00, 0x00, 0x00);
-	DrawLine(0, 951, 239, 951, 0x00, 0x00, 0x00);
-
-	DisplaySplash();
-
-	HAL_Delay(2000);
-
-	ClearScreen();					// Again.....
-
-	// Test only - 400pixel based test lines for viewing the centre line and the left, middle and far right positions.
-	// The internal memory is set up as 400x960 but the leftmost 80 pixels are considered overscan and don't show up, thus 320
-	// startX, startY, endX, endY, colorRED, colorGREEN, colorBLUE
-	//DrawLine(0, 0, 239, 0, 0x00, 0xFF, 0xFF);		// far left hand vertical line, black, 1 pixel line. 938 not 960 seems to be far right edge!
-	//DrawLine(0, 480, 239, 480, 0xFF, 0x00, 0xFF);	// mid-way
-	//DrawLine(0, 959, 239, 959, 0xFF, 0xFF, 0x00);	// far right
-	//DrawLine(119, 0, 119, 959, 0xFF, 0xFF, 0xFF);	// centred on R6243 horizontally
+	ClearScreen();
 
 	__HAL_GPIO_EXTI_CLEAR_IT(DMM_SYNC_Pin);			// Clear any pending interrupt flag for SYNC (PB11)
 	//HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);			// Ready to accept 3478A inputs
 
 
 	//**************************************************************************************************
-	// Main loop initialize
+	// Main loop
 
-	while (1) {			// While loop running continious, full speed
+	while (1) {			// Main loop running continious, full speed.....yeah, should have been on a timer but it's fine.
 
 		// TEST
 		//isaState = HAL_GPIO_ReadPin(DMM_ISA_GPIO_Port, DMM_ISA_Pin);
@@ -209,7 +173,7 @@ int main(void) {
 		//volatile uint8_t debugIsaState = isaState; // Monitor these in Live Watch
 		//volatile uint8_t debugInaState = inaState;
 
-		HAL_GPIO_TogglePin(GPIOC, TEST_OUT_Pin); // Test LED toggle
+		HAL_GPIO_TogglePin(GPIOC, TEST_OUT_Pin); // BluePill toggle Test LED
 
 		DisplayMain();
 

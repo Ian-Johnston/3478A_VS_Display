@@ -24,7 +24,7 @@ uint32_t MainColourFore = 0xFFFFFF;			// White FFFFFF
 uint32_t AnnunColourFore = 0x00FF00;		// Green 00FF00
 uint32_t BackgroundColour = 0x000000;		// Black 000000
 uint32_t SplashIanJColourFore = 0xFFFF00;	// Yellow FFFF00
-uint32_t TriggerColourFore = 0xFF0000;	    // Yellow FFFF00
+uint32_t TriggerColourFore = 0x00FF00;	    // Green 00FF00
 extern volatile uint8_t dpFarRight;
 
 
@@ -49,18 +49,16 @@ void DisplayMain(void)
 		Ypos_MAIN      // Cursor Y
 	);
 
-	// Always draw exactly 14 characters (13 source + 1 added)
+	// Always draw exactly 14 characters
 	char text1[15];   // 14 chars + terminator
 	int i;
 
-	// Copy the 13 source characters (displayWithPunct is always 13 chars)
-	for (i = 0; i < 13; i++) {
+	// Copy up to 14 source characters (some frames really have 14)
+	for (i = 0; i < 14; i++) {
 		char c = displayWithPunct[i];
 		text1[i] = (c == '\0') ? ' ' : c;
 	}
 
-	// Default: add trailing space as the 14th character
-	text1[13] = ' ';
 	text1[14] = '\0';
 
 	ShiftUnitsRight(text1);		// Shift last 4 chars to the right if match criteria
@@ -102,8 +100,24 @@ void FixRandomStrings(char* text1)
 			strcpy(text1, "##############");
 		}
 		else if (strstr(text1, "5ELF TE5T") != NULL) {
-			strcpy(text1, "SELF TEST OK");
+			strcpy(text1, "SELF TEST OK  ");
 		}
+
+		// Fix ADR5 -> ADRS
+		{
+			char* p = strstr(text1, "ADR5");
+			if (p != NULL) {
+				p[3] = 'S';
+			}
+		}
+
+		// Fix "C:" -> "C" (terminate string at colon)
+		//{
+		//	char* p = strstr(text1, "C:");
+		//	if (p != NULL) {
+		//		p[1] = '\0';   // end string after 'C'
+		//	}
+		//}
 
 		// Save as last good string
 		strcpy(prevText1, text1);
@@ -111,8 +125,6 @@ void FixRandomStrings(char* text1)
 
 	return;
 }
-
-
 
 
 // Shift chars right - We have more space on the TFT so can afford to do this
@@ -221,7 +233,6 @@ void DisplayTrigger(void)
 	else {
 		DrawText(" ");
 	}
-
 }
 
 
@@ -300,6 +311,187 @@ void DisplayAnnunciators() {
 
 void DisplaySplash() {
 
+	uint32_t originalColour = MainColourFore;
+
+	// Colour sequence (no black or white)
+	uint32_t splashCols[10] = {
+		0xFF0000, // red
+		0x00FF00, // green
+		0x0000FF, // blue
+		0xFFFF00, // yellow
+		0xFF00FF, // magenta
+		0x00FFFF, // cyan
+		0xFF8000, // orange
+		0x8000FF, // purple
+		0x00FF80, // spring green
+		0xFFFFFF  // white
+	};
+
+	for (int pass = 0; pass < 10; pass++) {
+
+		MainColourFore = splashCols[pass];
+		AnnunColourFore = splashCols[pass];
+
+		// Main
+		SetTextColors(MainColourFore, BackgroundColour); // Foreground, Background
+		ConfigureFontAndPosition(
+			0b00,    // Internal CGROM
+			0b10,    // Font size
+			0b00,    // ISO 8859-1
+			0,       // Full alignment enabled
+			0,       // Chroma keying disabled
+			1,       // Rotate 90 degrees counterclockwise
+			0b11,    // Width multiplier
+			0b11,    // Height multiplier
+			1,       // Line spacing
+			4,       // Character spacing
+			Xpos_MAIN,     // Cursor X
+			Ypos_MAIN      // Cursor Y
+		);
+
+		// Always draw exactly 14 characters (13 source + 1 added)
+		char text1[15];   // 14 chars + terminator
+		int i;
+
+		// Copy the 13 source characters (displayWithPunct is always 13 chars)
+		for (i = 0; i < 13; i++) {
+			char c = displayWithPunct[i];
+			text1[i] = (c == '\0') ? ' ' : c;
+		}
+
+		// Default: add trailing space as the 14th character
+		text1[13] = ' ';
+		text1[14] = '\0';
+
+		memcpy(text1, "##############", 14);
+		text1[14] = '\0';
+
+		DrawText(text1);
+
+		HAL_Delay(10);
+
+		// Annunciators
+		const char* AnnuncNames[12] = {
+		   "SRQ", "LSTN", "TLK", "RMT", "MATH", "AZOFF", "2ohm", "4ohm", "MRNG", "STRG", "CAL", "SHIFT"
+		};
+
+		// Set Y-position of the annunciators
+		int AnnuncYCoords[12] = {
+			10,   // SRQ
+			77,   // LSTN
+			157,  // TLK
+			220,  // RMT
+			285,  // MATH
+			365,  // AZOFF
+			454,  // 2ohm
+			532,  // 4ohm
+			616,  // MRNG
+			693,  // STRG
+			770,  // CAL
+			830   // SHIFT
+		};
+
+		for (int i = 0; i < 12; i++) {
+
+			SetTextColors(AnnunColourFore, BackgroundColour); // ON
+			ConfigureFontAndPosition(
+				0b00,    // Internal CGROM
+				0b00,    // 16-dot font size
+				0b00,    // ISO 8859-1
+				0,       // Full alignment enabled
+				0,       // Chroma keying disabled
+				1,       // Rotate 90 degrees counterclockwise
+				0b01,    // Width X0
+				0b01,    // Height X0
+				5,       // Line spacing
+				0,       // Character spacing
+				Xpos_ANNUNC,
+				AnnuncYCoords[i]
+			);
+
+			DrawText(AnnuncNames[i]);
+			HAL_Delay(5);
+		}
+
+		// Diamond
+		SetTextColors(TriggerColourFore, BackgroundColour); // Foreground, Background
+		ConfigureFontAndPosition(
+			0b00,    // Internal CGROM
+			0b10,    // Font size
+			0b00,    // ISO 8859-1
+			0,       // Full alignment enabled
+			0,       // Chroma keying disabled
+			1,       // Rotate 90 degrees counterclockwise
+			0b01,    // Width multiplier
+			0b01,    // Height multiplier
+			1,       // Line spacing
+			4,       // Character spacing
+			Xpos_TRIGGER,     // Cursor X
+			Ypos_TRIGGER      // Cursor Y
+		);
+
+		char sym[2];
+		sym[0] = 0x04;   // H0,L4 - diamond
+		sym[1] = '\0';
+		DrawText(sym);
+
+		HAL_Delay(1);  // Required after each full run
+	}
+
+	// Restore white at the end
+	AnnunColourFore = 0x00FF00;
+	MainColourFore = 0xFFFFFF;
+
+	// --- Final redraw of annunciators in green so they actually end up green ---
+
+	// Annunciators
+	const char* AnnuncNames[12] = {
+	   "SRQ", "LSTN", "TLK", "RMT", "MATH", "AZOFF", "2ohm", "4ohm", "MRNG", "STRG", "CAL", "SHIFT"
+	};
+
+	// Set Y-position of the annunciators
+	int AnnuncYCoords[12] = {
+		10,   // SRQ
+		77,   // LSTN
+		157,  // TLK
+		220,  // RMT
+		285,  // MATH
+		365,  // AZOFF
+		454,  // 2ohm
+		532,  // 4ohm
+		616,  // MRNG
+		693,  // STRG
+		770,  // CAL
+		830   // SHIFT
+	};
+
+	for (int i = 0; i < 12; i++) {
+
+		SetTextColors(AnnunColourFore, BackgroundColour); // ON
+		ConfigureFontAndPosition(
+			0b00,    // Internal CGROM
+			0b00,    // 16-dot font size
+			0b00,    // ISO 8859-1
+			0,       // Full alignment enabled
+			0,       // Chroma keying disabled
+			1,       // Rotate 90 degrees counterclockwise
+			0b01,    // Width X0
+			0b01,    // Height X0
+			5,       // Line spacing
+			0,       // Character spacing
+			Xpos_ANNUNC,
+			AnnuncYCoords[i]
+		);
+
+		DrawText(AnnuncNames[i]);
+		HAL_Delay(5);
+	}
+}
+
+
+// Original splash not used.
+void DisplaySplash2() {
+
 	// Main
 	SetTextColors(MainColourFore, BackgroundColour); // Foreground, Background
 	ConfigureFontAndPosition(
@@ -340,7 +532,7 @@ void DisplaySplash() {
 
 	// Annunciators
 	const char* AnnuncNames[12] = {
-       "SRQ", "LSTN", "TLK", "RMT", "MATH", "AZOFF", "2ohm", "4ohm", "MRNG", "STRG", "CAL", "SHIFT"
+	   "SRQ", "LSTN", "TLK", "RMT", "MATH", "AZOFF", "2ohm", "4ohm", "MRNG", "STRG", "CAL", "SHIFT"
 	};
 
 	// Set Y-position of the annunciators
@@ -404,3 +596,5 @@ void DisplaySplash() {
 	DrawText(sym);
 
 }
+
+

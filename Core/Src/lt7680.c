@@ -45,9 +45,9 @@ volatile uint8_t SystemCheckTempValue = 0;
 
 void HardwareReset(void) {
     HAL_GPIO_WritePin(RESET_PORT, RESET_PIN, GPIO_PIN_RESET); // Pull reset low
-    HAL_Delay(100); // Delay 100 ms
+    HAL_Delay(10); // Delay 10 ms
     HAL_GPIO_WritePin(RESET_PORT, RESET_PIN, GPIO_PIN_SET);   // Release reset
-    HAL_Delay(100); // Delay 100 ms
+    HAL_Delay(10); // Delay 10 ms
 }
 
 
@@ -1214,4 +1214,29 @@ void TFT_WipeTest(void)
 
         HAL_Delay(1);
     }
+}
+
+
+void RightWipe() {
+    // Right wipe to clear random pixels down the far right hand side	- Only needed if back porch adjustments can't get rid of edge pixels
+    DrawLine(0, 959, 239, 959, 0x00, 0x00, 0x00);	// far right hand vertical line, black, 1 pixel line. (this line hidden!)
+    DrawLine(0, 958, 239, 958, 0x00, 0x00, 0x00);	// (this line hidden!)
+    DrawLine(0, 957, 239, 957, 0x00, 0x00, 0x00);
+    DrawLine(0, 956, 239, 956, 0x00, 0x00, 0x00);
+    DrawLine(0, 955, 239, 955, 0x00, 0x00, 0x00);
+    DrawLine(0, 954, 239, 954, 0x00, 0x00, 0x00);
+    DrawLine(0, 953, 239, 953, 0x00, 0x00, 0x00);
+    DrawLine(0, 952, 239, 952, 0x00, 0x00, 0x00);
+    DrawLine(0, 951, 239, 951, 0x00, 0x00, 0x00);
+}
+
+
+void TestDraw() {
+    // Test only - 400pixel based test lines for viewing the centre line and the left, middle and far right positions.
+    // The internal memory is set up as 400x960 but the leftmost 80 pixels are considered overscan and don't show up, thus 320
+    // startX, startY, endX, endY, colorRED, colorGREEN, colorBLUE
+    DrawLine(0, 0, 239, 0, 0x00, 0xFF, 0xFF);		// far left hand vertical line, black, 1 pixel line. 938 not 960 seems to be far right edge!
+    DrawLine(0, 480, 239, 480, 0xFF, 0x00, 0xFF);	// mid-way
+    DrawLine(0, 959, 239, 959, 0xFF, 0xFF, 0x00);	// far right
+    DrawLine(119, 0, 119, 959, 0xFF, 0xFF, 0xFF);	// centred on R6243 horizontally
 }
