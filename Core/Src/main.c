@@ -16,15 +16,14 @@
 
   * Inteface with 3478A:
   * ======================================
-  * U611 pin    BluePill          Function
-  * 9           B15               INA
-  * 15          B14               ISA
-  * 12          B11               SYNC
-  * 3           B1                01		(do not use 02 - Pin 6)
-  * 2           B12               PW0
-  * 5           not connected
-  * 20                            +5V
-  * 10                            0V
+  * U611 pin    Display connector	BluePill          Function
+  * 9			12					B15               IWA (INA)
+  * 15			15					B14               ISA
+  * 12			14					B11               SYNC
+  * 3			10					B1                01		(do not use 02 - Pin 6)
+  * 2			9					B12               PW0
+  * 20			8									  +5V
+  * 10			4									  0V
   * 
   * 
   * 
