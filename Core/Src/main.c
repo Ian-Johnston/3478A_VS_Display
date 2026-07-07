@@ -69,6 +69,19 @@ uint8_t inaState = 0;
 
 extern volatile uint8_t logReady;
 
+// BluePill clone determination/tests
+volatile uint32_t dbg_sysclk_hz = 0;
+volatile uint32_t dbg_hclk_hz = 0;
+volatile uint32_t dbg_pclk1_hz = 0;
+volatile uint32_t dbg_pclk2_hz = 0;
+volatile uint32_t dbg_clock_source = 0;
+volatile uint32_t dbg_hse_ready = 0;
+volatile uint32_t dbg_pll_ready = 0;
+volatile uint32_t dbg_loop_count = 0;
+volatile uint32_t dbg_loop_per_sec = 0;
+volatile uint32_t dbg_loop_last_ms = 0;
+volatile uint32_t dbg_loop_test_done = 0;
+
 
 //******************************************************************************
 // HP Symbols
@@ -163,6 +176,9 @@ int main(void) {
 	//**************************************************************************************************
 	// Main loop
 
+	RunBluePillSpeedTestOffline();	// BluePill speed test
+	ClearScreen();					// Again.....
+
 	while (1) {			// Main loop running continious, full speed.....yeah, should have been on a timer but it's fine.
 
 		// TEST
@@ -187,6 +203,50 @@ int main(void) {
 
 	}
 
+}
+
+
+void RunBluePillSpeedTestOffline(void)
+{
+	// BluePill clone determination/test - standalone loop speed test when no comms is available
+	// Loops per sec is displayed on the TFT for 2secs at boot.
+	// Examples: Good board = 1497606, bad board = TBA
+
+	dbg_loop_count = 0;
+	dbg_loop_per_sec = 0;
+	dbg_loop_test_done = 0;
+
+	uint32_t test_start_ms = HAL_GetTick();
+
+	while ((HAL_GetTick() - test_start_ms) < 1000)
+	{
+		dbg_loop_count++;
+	}
+
+	dbg_loop_per_sec = dbg_loop_count;
+	dbg_loop_test_done = 1;
+
+	DisplayCloneDeterminationAux();
+
+	HAL_Delay(2000);
+}
+
+
+void RunBluePillSpeedTestOnline(void)
+{
+	// BluePill clone determination/test - Loops per sec is displayed on the TFT for 2secs at boot. Examples: Good board = 43596, Bad board = 849
+	if (!dbg_loop_test_done)
+	{
+		dbg_loop_count++;
+		uint32_t loop_now = HAL_GetTick();
+		if ((loop_now - dbg_loop_last_ms) >= 1000)
+		{
+			dbg_loop_per_sec = dbg_loop_count;
+			dbg_loop_test_done = 1;     // stop further testing
+			DisplayCloneDeterminationAux();
+			HAL_Delay(2000);
+		}
+	}
 }
 
 
