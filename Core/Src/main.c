@@ -176,7 +176,7 @@ int main(void) {
 	//**************************************************************************************************
 	// Main loop
 
-	RunBluePillSpeedTestOffline();	// BluePill speed test
+	RunBluePillSpeedTestOffline();	// BluePill speed test = 1481923 typical
 	ClearScreen();					// Again.....
 
 	while (1) {			// Main loop running continious, full speed.....yeah, should have been on a timer but it's fine.
@@ -191,15 +191,15 @@ int main(void) {
 
 		DisplayMain();
 
-		HAL_Delay(10);
+		//HAL_Delay(10);
 
 		DisplayAnnunciators();
 
-		HAL_Delay(10);
+		//HAL_Delay(10);
 
 		DisplayTrigger();
 
-		HAL_Delay(10);
+		//HAL_Delay(10);
 
 	}
 
